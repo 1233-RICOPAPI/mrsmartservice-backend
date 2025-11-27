@@ -5,8 +5,8 @@ import cors from 'cors';
 import path from 'path';
 import multer from 'multer';
 import { MercadoPagoConfig, Preference } from 'mercadopago';
-import bcrypt from 'bcryptjs';                // para hashear/validar contraseñas
-import { pool, query } from './db.js';        // conexión a PostgreSQL
+import bcrypt from 'bcryptjs';
+import { pool, query } from './db.js';
 import { seedAdminOnce, login, requireAdmin } from "./auth.js";
 
 // ===== App base =====
@@ -26,7 +26,6 @@ const storage = multer.diskStorage({
     cb(null, name);
   }
 });
-
 const upload = multer({ storage });
 
 // ===== Utils =====
@@ -53,7 +52,6 @@ function getBackUrls() {
 if (!has(process.env.MP_ACCESS_TOKEN)) {
   console.error('❌ Falta MP_ACCESS_TOKEN en .env');
 }
-
 const mp = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN });
 
 // ===== Seed admin por defecto =====
@@ -107,46 +105,35 @@ app.post('/api/login', login);
 // ================== CAMBIO DE CONTRASEÑA (ADMIN) ==================
 app.post("/api/users/change-password", requireAdmin, async (req, res) => {
   try {
-    // requireAdmin ya validó el token y dejó el usuario en req.user
     const userId = req.user?.user_id ?? req.user?.sub ?? null;
-
     const { oldPassword, newPassword } = req.body || {};
     console.log("[change-password] userId=", userId);
 
     if (!userId) {
       return res.status(401).json({ error: "unauthorized" });
     }
-
     if (!oldPassword || !newPassword) {
       return res.status(400).json({ error: "missing_fields" });
     }
-
     if (newPassword.length < 8) {
       return res.status(400).json({ error: "weak_password" });
     }
 
-    // query devuelve array de filas
     const rows = await query(
       "SELECT user_id, password_hash FROM users WHERE user_id = $1",
       [userId]
     );
-
     if (!rows.length) {
       return res.status(404).json({ error: "user_not_found" });
     }
 
     const user = rows[0];
-
-    // Validar contraseña actual
     const ok = await bcrypt.compare(oldPassword, user.password_hash);
     if (!ok) {
       return res.status(400).json({ error: "invalid_password" });
     }
 
-    // Hashear nueva contraseña
     const newHash = await bcrypt.hash(newPassword, 10);
-
-    // OJO: tu tabla users no tiene updated_at ⇒ solo actualizamos el hash
     await query(
       "UPDATE users SET password_hash = $1 WHERE user_id = $2",
       [newHash, user.user_id]
@@ -159,17 +146,14 @@ app.post("/api/users/change-password", requireAdmin, async (req, res) => {
   }
 });
 
-
 // ================== UPLOAD IMÁGENES ==================
 app.post('/api/upload', requireAdmin, upload.single('image'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'no_file' });
-
-  const url = `/uploads/${req.file.filename}`; // esta URL se guarda en image_url del producto
+  const url = `/uploads/${req.file.filename}`;
   res.json({ ok: true, url });
 });
 
 // ================== PRODUCTS CRUD ==================
-// GET público (catálogo)
 app.get('/api/products', async (_req, res) => {
   try {
     const rows = await query(
@@ -182,7 +166,6 @@ app.get('/api/products', async (_req, res) => {
   }
 });
 
-// POST protegido (crear producto)
 app.post('/api/products', requireAdmin, async (req, res) => {
   const { name, price, stock, discount_percent = 0, image_url, category } = req.body;
 
@@ -195,7 +178,6 @@ app.post('/api/products', requireAdmin, async (req, res) => {
   res.json(rows[0]);
 });
 
-// PUT protegido (editar producto)
 app.put('/api/products/:id', requireAdmin, async (req, res) => {
   const id = +req.params.id;
   const fields = ['name', 'price', 'stock', 'discount_percent', 'image_url', 'category', 'active'];
@@ -226,7 +208,6 @@ app.put('/api/products/:id', requireAdmin, async (req, res) => {
   res.json(rows[0] ?? {});
 });
 
-// DELETE protegido (eliminar producto)
 app.delete('/api/products/:id', requireAdmin, async (req, res) => {
   const id = +req.params.id;
   await query('DELETE FROM products WHERE product_id=$1', [id]);
@@ -234,9 +215,6 @@ app.delete('/api/products/:id', requireAdmin, async (req, res) => {
 });
 
 // ================== PAYMENTS (Mercado Pago v2) ==================
-// 🔴 Nueva lógica: cuando se crea la preferencia, también se registra la orden
-// en la BD como "approved" y se descuentan stocks + order_items.
-// El webhook queda solo como respaldo.
 app.post('/api/payments/create', async (req, res) => {
   try {
     if (!has(process.env.MP_ACCESS_TOKEN)) {
@@ -280,10 +258,41 @@ app.post('/api/payments/create', async (req, res) => {
 
     const back_urls = getBackUrls();
     console.log('🟢 Back URLs (create):', back_urls);
-
     if (!back_urls) return res.status(500).json({ error: 'missing_front_url' });
 
-    // 1) Crear preferencia en MP
+    // 💾 NUEVO: guardamos la orden COMO APPROVED + sus items
+    const total = norm.reduce((a, b) => a + b.unit_price * b.quantity, 0);
+
+    const client = await pool.connect();
+    let orderId;
+    try {
+      await client.query('BEGIN');
+
+      const orderRes = await client.query(
+        `INSERT INTO orders(status, total_amount)
+         VALUES('approved', $1)
+         RETURNING order_id`,
+        [total]
+      );
+      orderId = orderRes.rows[0].order_id;
+
+      for (const item of norm) {
+        await client.query(
+          `INSERT INTO order_items(order_id, product_id, quantity, unit_price)
+           VALUES($1,$2,$3,$4)`,
+          [orderId, item.product_id, item.quantity, item.unit_price]
+        );
+      }
+
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      console.error('❌ Error guardando orden + items:', e);
+      return res.status(500).json({ error: 'order_save_failed' });
+    } finally {
+      client.release();
+    }
+
     const body = {
       items: norm.map(i => ({
         id: String(i.product_id),
@@ -294,7 +303,7 @@ app.post('/api/payments/create', async (req, res) => {
       })),
       binary_mode: true,
       back_urls: back_urls || undefined,
-      metadata: { ts: Date.now() }
+      metadata: { ts: Date.now(), order_id: orderId }
     };
 
     console.log('🟢 Body enviado a MP (create):', body);
@@ -307,39 +316,6 @@ app.post('/api/payments/create', async (req, res) => {
       return res.status(502).json({ error: 'mp_no_init_point' });
     }
 
-    // 2) Registrar orden en BD como "approved" y restar stock
-    const total = norm.reduce((a, b) => a + b.unit_price * b.quantity, 0);
-
-    // orden principal
-    const orderRows = await query(
-      `INSERT INTO orders(status, total_amount)
-       VALUES('approved', $1)
-       RETURNING order_id`,
-      [total]
-    );
-    const orderId = orderRows[0]?.order_id;
-
-    // order_items + actualizar stock
-    for (const item of norm) {
-      try {
-        await query(
-          `INSERT INTO order_items(order_id, product_id, quantity, unit_price)
-           VALUES($1, $2, $3, $4)`,
-          [orderId, item.product_id, item.quantity, item.unit_price]
-        );
-
-        await query(
-          `UPDATE products
-             SET stock = stock - $1
-           WHERE product_id = $2`,
-          [item.quantity, item.product_id]
-        );
-      } catch (e) {
-        console.warn('order_items / stock error (pero no rompemos el pago):', e?.message);
-      }
-    }
-
-    // 3) Devolver URL de pago a tu front
     res.json({ init_point: out.init_point });
   } catch (e) {
     try {
@@ -353,15 +329,52 @@ app.post('/api/payments/create', async (req, res) => {
   }
 });
 
-// ===== Webhook: ahora solo hace logging suave, no depende la lógica de ventas
+// ===== Webhook: actualizar orden + descontar stock =====
 app.post('/api/payments/webhook', async (req, res) => {
   try {
     const event = req.body;
-    console.log('🟣 WEBHOOK EVENT:', JSON.stringify(event));
 
-    // Si algún día quieres reconciliar pagos con MP, aquí puedes
-    // leer el paymentId y actualizar la orden, pero tu panel ya
-    // funciona sin depender de esto.
+    if (event?.type === 'payment' && event.data?.id) {
+      const paymentId = event.data.id;
+
+      const resp = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
+        headers: { Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}` }
+      });
+
+      const pay = await resp.json();
+      console.log('🟢 WEBHOOK PAYMENT:', pay.id, pay.status);
+
+      if (pay.status === 'approved') {
+        const items = pay.additional_info?.items || [];
+
+        // Descontar stock
+        for (const item of items) {
+          const productId = Number(item.id);
+          const qty = Number(item.quantity) || 0;
+
+          if (Number.isFinite(productId) && qty > 0) {
+            await query(
+              `UPDATE products
+                 SET stock = stock - $1
+               WHERE product_id = $2`,
+              [qty, productId]
+            );
+          }
+        }
+
+        // Vincular pago a la última orden sin payment_id
+        await query(
+          `UPDATE orders
+             SET payment_id = $1,
+                 payer_email = $2,
+                 updated_at = now()
+           WHERE payment_id IS NULL
+           ORDER BY order_id DESC
+           LIMIT 1`,
+          [String(paymentId), pay.payer?.email || null]
+        );
+      }
+    }
   } catch (e) {
     console.error('webhook error:', e);
   }
@@ -377,13 +390,11 @@ app.get("/api/orders", requireAdmin, async (req, res) => {
     const where = [];
     const args = [];
 
-    // filtro por estado
     if (status && status !== "todos") {
       args.push(status);
       where.push(`status = $${args.length}`);
     }
 
-    // filtro por texto (order_id / email)
     if (q && q.trim()) {
       const like = `%${q.trim().toLowerCase()}%`;
       args.push(like, like);
@@ -393,7 +404,6 @@ app.get("/api/orders", requireAdmin, async (req, res) => {
       )`);
     }
 
-    // filtro por fechas (opcional)
     if (from) {
       args.push(from);
       where.push(`created_at::date >= $${args.length}`);
