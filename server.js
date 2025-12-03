@@ -18,7 +18,34 @@ import {
 
 // ===== App base =====
 const app = express();
-app.use(cors());
+
+/**
+ * CORS: permitir
+ * - Netlify: https://sparkling-llama-c1c397.netlify.app
+ * - Local front: http://localhost:5500 y http://127.0.0.1:5500
+ * - Herramientas sin Origin (Postman, Thunder, etc.)
+ */
+const allowedOrigins = [
+  'https://sparkling-llama-c1c397.netlify.app',
+  'http://localhost:5500',
+  'http://127.0.0.1:5500',
+];
+
+const corsOptions = {
+  origin(origin, callback) {
+    // Sin origin (Postman, curl, etc.) -> permitir
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    // Si quieres debug:
+    // console.warn('CORS bloqueado para origin:', origin);
+    return callback(null, false);
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions)); // preflight
 app.use(express.json({ limit: '1mb' }));
 
 // Servir archivos estáticos de imágenes subidas
