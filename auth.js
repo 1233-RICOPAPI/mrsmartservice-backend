@@ -60,7 +60,7 @@ export async function login(req, res) {
     }
 
     const user = rows[0];
-    const ok = await bcrypt.compare(password, user.password_hash);
+    const ok   = await bcrypt.compare(password, user.password_hash);
     if (!ok) {
       return res.status(401).json({ error: "invalid_credentials" });
     }
@@ -88,7 +88,7 @@ export async function login(req, res) {
   }
 }
 
-/* ================== MIDDLEWARES ================== */
+/* ================== MIDDLEwares ================== */
 
 // 🔒 Operaciones de “admin” → ADMIN y DEV_ADMIN
 export function requireAdmin(req, res, next) {
@@ -136,6 +136,17 @@ export function requireStaff(req, res, next) {
 }
 
 /* ============ RESET DE CONTRASEÑA (ADMIN / DEV) ============ */
+
+/**
+ * Helper para base del front (Netlify o local)
+ */
+function getFrontBase() {
+  const env = (process.env.FRONT_URL || "").trim().replace(/\/+$/, "");
+  if (env) return env; // producción (Netlify) o lo que tengas configurado
+  // Fallback local
+  return "http://127.0.0.1:5500/Ecomerce/web";
+}
+
 /**
  * POST /api/auth/request-reset
  * Body: { email }
@@ -150,7 +161,8 @@ export async function requestPasswordReset(req, res) {
   }
 
   try {
-    const { rows } = await query(
+    // query devuelve array directo
+    const rows = await query(
       `SELECT user_id, role, email FROM users WHERE email = $1`,
       [email]
     );
@@ -177,11 +189,11 @@ export async function requestPasswordReset(req, res) {
       [user.user_id, token, expiresAt]
     );
 
-    // URL del front que tiene reset-password.html
-    const resetUrl =
-      `https://sparkling-llama-c1c397.netlify.app/reset-password.html?token=${token}`;
+    // URL del front que tiene reset-password.html (Netlify o local)
+    const base     = getFrontBase();
+    const resetUrl = `${base}/reset-password.html?token=${token}`;
 
-    // === Transporter SMTP usando variables de entorno ===
+    // Validar que haya configuración SMTP
     if (
       !process.env.SMTP_HOST ||
       !process.env.SMTP_USER ||
@@ -251,7 +263,7 @@ export async function resetPassword(req, res) {
   }
 
   try {
-    const { rows } = await query(
+    const rows = await query(
       `SELECT id, user_id, expires_at, used
        FROM password_resets
        WHERE token = $1`,
@@ -262,7 +274,7 @@ export async function resetPassword(req, res) {
       return res.status(400).json({ error: "invalid_token" });
     }
 
-    const row = rows[0];
+    const row     = rows[0];
     const expired = new Date(row.expires_at) < new Date();
 
     if (row.used || expired) {
