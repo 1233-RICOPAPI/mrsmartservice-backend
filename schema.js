@@ -36,12 +36,23 @@ CREATE TABLE IF NOT EXISTS orders (
 CREATE TABLE IF NOT EXISTS order_items (
   order_item_id SERIAL PRIMARY KEY,
   order_id INTEGER NOT NULL REFERENCES orders(order_id) ON DELETE CASCADE,
-  product_id INTEGER NOT NULL REFERENCES products(product_id),
+  -- product_id PUEDE SER NULL para líneas especiales (ej: envío a domicilio)
+  product_id INTEGER REFERENCES products(product_id),
   quantity INTEGER NOT NULL DEFAULT 1,
   unit_price NUMERIC(12,2) NOT NULL DEFAULT 0
 );
 
--- Ejemplo de vista simple para stats (luego la refinamos)
+-- Reseñas por producto
+CREATE TABLE IF NOT EXISTS product_reviews (
+  review_id   SERIAL PRIMARY KEY,
+  product_id  INTEGER NOT NULL REFERENCES products(product_id) ON DELETE CASCADE,
+  author_name TEXT NOT NULL,
+  rating      INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  comment     TEXT,
+  created_at  TIMESTAMP NOT NULL DEFAULT now()
+);
+
+-- Vista simple para stats
 CREATE OR REPLACE VIEW v_sales_daily AS
 SELECT
   date(created_at) AS day,
