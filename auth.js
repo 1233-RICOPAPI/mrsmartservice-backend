@@ -74,7 +74,7 @@ export async function login(req, res) {
       sub:     user.user_id,
       user_id: user.user_id,
       email:   user.email,
-      role:    user.role, // ADMIN / DEV_ADMIN
+      role:    user.role, // ADMIN / DEV_ADMIN / USER
     };
 
     const token = jwt.sign(payload, process.env.JWT_SECRET, {
@@ -153,6 +153,7 @@ function getFrontBase() {
  *
  * - Solo genera link si el usuario existe y es ADMIN o DEV_ADMIN.
  * - Siempre responde { ok: true } para no revelar si el correo existe.
+ * - En desarrollo (NODE_ENV !== 'production'), devuelve resetUrl para debug.
  */
 export async function requestPasswordReset(req, res) {
   const { email } = req.body || {};
@@ -161,7 +162,6 @@ export async function requestPasswordReset(req, res) {
   }
 
   try {
-    // query devuelve array directo
     const rows = await query(
       `SELECT user_id, role, email FROM users WHERE email = $1`,
       [email]
@@ -177,6 +177,8 @@ export async function requestPasswordReset(req, res) {
 
     // Solo permitimos reset a staff (ADMIN / DEV_ADMIN)
     if (!["ADMIN", "DEV_ADMIN"].includes(roleUpper)) {
+      // Aquí podrías devolver 403 si quieres mensaje especial:
+      // return res.status(403).json({ error: "only_staff_can_reset" });
       return res.json({ ok: true });
     }
 
@@ -189,58 +191,62 @@ export async function requestPasswordReset(req, res) {
       [user.user_id, token, expiresAt]
     );
 
-    // URL del front que tiene reset-password.html (Netlify o local)
     const base     = getFrontBase();
     const resetUrl = `${base}/reset-password.html?token=${token}`;
 
-    // Validar que haya configuración SMTP
-    if (
-      !process.env.SMTP_HOST ||
-      !process.env.SMTP_USER ||
-      !process.env.SMTP_PASS
-    ) {
-      console.error("❌ Faltan variables SMTP en .env");
-      // Aun así devolvemos ok para no filtrar info
-      return res.json({ ok: true });
+    const isDev =
+      (process.env.NODE_ENV || "").toLowerCase() !== "production";
+
+    const hasSMTP =
+      !!process.env.SMTP_HOST &&
+      !!process.env.SMTP_USER &&
+      !!process.env.SMTP_PASS;
+
+    if (hasSMTP) {
+      const transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST,
+        port: Number(process.env.SMTP_PORT || 587),
+        secure: false, // 587 = STARTTLS
+        auth: {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS,
+        },
+      });
+
+      await transporter.sendMail({
+        from: `"MR SmartService" <${process.env.SMTP_USER}>`,
+        to: email,
+        subject: "Recupera tu contraseña - MR SmartService",
+        html: `
+          <p>Hola,</p>
+          <p>Has solicitado restablecer tu contraseña en <strong>MR SmartService</strong>.</p>
+          <p>Haz clic en el siguiente botón para crear una nueva contraseña:</p>
+          <p>
+            <a href="${resetUrl}" style="
+              background:#007bff;
+              color:#fff;
+              padding:10px 18px;
+              border-radius:4px;
+              text-decoration:none;
+              display:inline-block;">
+              Restablecer contraseña
+            </a>
+          </p>
+          <p>O copia y pega este enlace en tu navegador:</p>
+          <p><a href="${resetUrl}">${resetUrl}</a></p>
+          <p>Si tú no solicitaste esto, puedes ignorar este correo.</p>
+        `,
+      });
+    } else {
+      console.error("❌ Faltan variables SMTP en .env (modo debug sin correo)");
     }
 
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT || 587),
-      secure: false, // 587 = STARTTLS
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
+    // En producción: no exponemos el enlace
+    // En desarrollo: lo devolvemos para que lo veas en la consola JS del front
+    return res.json({
+      ok: true,
+      resetUrl: isDev ? resetUrl : undefined,
     });
-
-    await transporter.sendMail({
-      from: `"MR SmartService" <${process.env.SMTP_USER}>`,
-      to: email,
-      subject: "Recupera tu contraseña - MR SmartService",
-      html: `
-        <p>Hola,</p>
-        <p>Has solicitado restablecer tu contraseña en <strong>MR SmartService</strong>.</p>
-        <p>Haz clic en el siguiente botón para crear una nueva contraseña:</p>
-        <p>
-          <a href="${resetUrl}" style="
-            background:#007bff;
-            color:#fff;
-            padding:10px 18px;
-            border-radius:4px;
-            text-decoration:none;
-            display:inline-block;">
-            Restablecer contraseña
-          </a>
-        </p>
-        <p>O copia y pega este enlace en tu navegador:</p>
-        <p><a href="${resetUrl}">${resetUrl}</a></p>
-        <p>Si tú no solicitaste esto, puedes ignorar este correo.</p>
-      `,
-    });
-
-    // Siempre respuesta genérica
-    return res.json({ ok: true });
   } catch (err) {
     console.error("❌ requestPasswordReset error:", err);
     // No damos detalles al front para no filtrar info
@@ -281,9 +287,12 @@ export async function resetPassword(req, res) {
       return res.status(400).json({ error: "expired_token" });
     }
 
+    if (password.length < 8) {
+      return res.status(400).json({ error: "weak_password" });
+    }
+
     const hash = await bcrypt.hash(password, 10);
 
-    // Actualizamos contraseña y marcamos el token como usado
     await query(
       `UPDATE users SET password_hash = $1 WHERE user_id = $2`,
       [hash, row.user_id]

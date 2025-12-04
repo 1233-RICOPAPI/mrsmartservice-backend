@@ -4,6 +4,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import multer from 'multer';
+import { v2 as cloudinary } from 'cloudinary';
 import { MercadoPagoConfig, Preference } from 'mercadopago';
 import bcrypt from 'bcryptjs';
 import { pool, query } from './db.js';
@@ -15,6 +16,13 @@ import {
   requestPasswordReset,
   resetPassword,
 } from './auth.js';
+
+// ================== CLOUDINARY ==================
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key:    process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 // ===== App base =====
 const app = express();
@@ -33,11 +41,8 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin(origin, callback) {
-    // Sin origin (Postman, curl, etc.) -> permitir
     if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) return callback(null, true);
-    // Si quieres debug:
-    // console.warn('CORS bloqueado para origin:', origin);
     return callback(null, false);
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -48,18 +53,11 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions)); // preflight
 app.use(express.json({ limit: '1mb' }));
 
-// Servir archivos estáticos de imágenes subidas
+// Servir archivos estáticos legacy (si aún tienes imágenes sueltas en /uploads)
 app.use('/uploads', express.static('uploads'));
 
-// ===== Multer (subida de imágenes) =====
-const storage = multer.diskStorage({
-  destination: 'uploads/',
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname || '');
-    const name = Date.now() + '-' + Math.round(Math.random() * 1e6) + ext;
-    cb(null, name);
-  },
-});
+// ===== Multer (archivos en memoria, para Cloudinary) =====
+const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
 // ===== Utils =====
@@ -71,13 +69,13 @@ function resolveFrontBase() {
   const env = trimRightSlash(process.env.FRONT_URL);
   if (has(env)) return env;
 
-  // Fallback SOLO para local si te olvidas FRONT_URL
+  // Fallback SOLO local
   const fallback = 'http://127.0.0.1:5500/Ecomerce/web';
   console.warn('⚠️ FRONT_URL no definido, usando fallback:', fallback);
   return fallback;
 }
 
-// back_urls OBLIGATORIAS para usar auto_return
+// back_urls para auto_return
 function getBackUrls() {
   const base = resolveFrontBase();
   if (!base) return null;
@@ -88,7 +86,7 @@ function getBackUrls() {
   };
 }
 
-// ===== Validación de credenciales MP =====
+// ===== Mercado Pago =====
 if (!has(process.env.MP_ACCESS_TOKEN)) {
   console.error('❌ Falta MP_ACCESS_TOKEN en .env');
 }
@@ -106,7 +104,6 @@ app.get('/api/debug/env', (_req, res) => {
     has_access_token: has(process.env.MP_ACCESS_TOKEN),
     token_prefix: (process.env.MP_ACCESS_TOKEN || '').slice(0, 6),
     front_url: process.env.FRONT_URL || null,
-    trimmed_front: resolveFrontBase(),
   });
 });
 
@@ -171,13 +168,9 @@ app.get('/api/debug/mp', async (_req, res) => {
 // ================== AUTH ==================
 app.post('/api/login', login);
 
-// Olvidé mi contraseña (solo admin/dev; hace INSERT en password_resets)
 app.post('/api/auth/request-reset', requestPasswordReset);
-
-// Formulario de nueva contraseña (usa token + nueva contraseña)
 app.post('/api/auth/reset-password', resetPassword);
 
-// /api/me para que el front pueda conocer el rol del usuario
 app.get('/api/me', requireStaff, async (req, res) => {
   try {
     const userId = req.user?.user_id ?? req.user?.sub ?? null;
@@ -199,16 +192,14 @@ app.get('/api/me', requireStaff, async (req, res) => {
   }
 });
 
-// ================== CAMBIO DE CONTRASEÑA (ADMIN + DEV) ==================
+// ================== CAMBIO DE CONTRASEÑA (propia) ==================
 app.post('/api/users/change-password', requireStaff, async (req, res) => {
   try {
     const userId = req.user?.user_id ?? req.user?.sub ?? null;
     const { oldPassword, newPassword } = req.body || {};
     console.log('[change-password] userId=', userId);
 
-    if (!userId) {
-      return res.status(401).json({ error: 'unauthorized' });
-    }
+    if (!userId) return res.status(401).json({ error: 'unauthorized' });
     if (!oldPassword || !newPassword) {
       return res.status(400).json({ error: 'missing_fields' });
     }
@@ -220,15 +211,11 @@ app.post('/api/users/change-password', requireStaff, async (req, res) => {
       'SELECT user_id, password_hash FROM users WHERE user_id = $1',
       [userId]
     );
-    if (!rows.length) {
-      return res.status(404).json({ error: 'user_not_found' });
-    }
+    if (!rows.length) return res.status(404).json({ error: 'user_not_found' });
 
     const user = rows[0];
     const ok = await bcrypt.compare(oldPassword, user.password_hash);
-    if (!ok) {
-      return res.status(400).json({ error: 'invalid_password' });
-    }
+    if (!ok) return res.status(400).json({ error: 'invalid_password' });
 
     const newHash = await bcrypt.hash(newPassword, 10);
     await query('UPDATE users SET password_hash = $1 WHERE user_id = $2', [
@@ -243,54 +230,28 @@ app.post('/api/users/change-password', requireStaff, async (req, res) => {
   }
 });
 
-// ================== GESTIÓN DE USUARIOS (ADMIN + DEV) ==================
-// Usuarios de panel (ADMIN / DEV_ADMIN), máx 3 extras (no cuenta admin/dev seed)
-
-// ⚠️ SOLO ADMIN/DEV_ADMIN (por requireAdmin) crea usuarios
+// ================== GESTIÓN DE USUARIOS PANEL ==================
+// Ahora: SOLO crea empleados/invitados con rol USER
 app.post('/api/users', requireAdmin, async (req, res) => {
   try {
-    const { email, password, role } = req.body || {};
-    if (!email) {
-      return res.status(400).json({ error: 'missing_email' });
-    }
+    const { email, password } = req.body || {};
+    if (!email) return res.status(400).json({ error: 'missing_email' });
 
-    let rawPassword = null;
-    if (password && typeof password === 'string' && password.trim().length) {
-      if (password.length < 8) {
-        return res.status(400).json({ error: 'weak_password' });
-      }
-      rawPassword = password;
-    } else {
-      rawPassword = '12345678';
-      console.warn(
-        `[users] Usuario ${email} creado con password por defecto "12345678".`
-      );
+    if (!password || typeof password !== 'string' || !password.trim().length) {
+      return res.status(400).json({ error: 'missing_password' });
     }
-
-    const cleanRole = String(role || 'DEV_ADMIN').toUpperCase();
-    const allowedRoles = ['ADMIN', 'DEV_ADMIN'];
-    const finalRole = allowedRoles.includes(cleanRole)
-      ? cleanRole
-      : 'DEV_ADMIN';
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'weak_password' });
+    }
 
     const exists = await query('SELECT 1 FROM users WHERE email = $1', [email]);
     if (exists.length) {
       return res.status(400).json({ error: 'email_in_use' });
     }
 
-    // Contar solo usuarios de panel EXTRA (excluye admin/dev seed)
-    const countRes = await query(
-      `SELECT COUNT(*) 
-         FROM users 
-        WHERE UPPER(role) IN ('ADMIN','DEV_ADMIN')
-          AND LOWER(email) NOT IN ('admin@tienda.com','dev@tienda.com')`
-    );
-    const count = Number(countRes[0].count || 0);
-    if (count >= 3) {
-      return res.status(400).json({ error: 'limit_reached' });
-    }
+    const hash = await bcrypt.hash(password.trim(), 10);
+    const finalRole = 'USER';
 
-    const hash = await bcrypt.hash(rawPassword, 10);
     const rows = await query(
       `INSERT INTO users(email, password_hash, role)
        VALUES($1, $2, $3)
@@ -305,7 +266,6 @@ app.post('/api/users', requireAdmin, async (req, res) => {
   }
 });
 
-// Reset password directo por email (ADMIN/DEV) – útil para usuarios normales
 app.post('/api/users/reset-password', requireStaff, async (req, res) => {
   try {
     const { email, newPassword } = req.body || {};
@@ -336,7 +296,7 @@ app.post('/api/users/reset-password', requireStaff, async (req, res) => {
   }
 });
 
-// Listar usuarios de panel (ADMIN + DEV)
+// Lista de usuarios administrativos (si la quieres seguir usando)
 app.get('/api/users', requireStaff, async (_req, res) => {
   try {
     const rows = await query(
@@ -352,8 +312,6 @@ app.get('/api/users', requireStaff, async (_req, res) => {
   }
 });
 
-// Eliminar usuario de panel
-// ⚠️ SOLO ADMIN/DEV_ADMIN (requireAdmin) y NO permite borrar admin/dev seed
 app.delete('/api/users/:id', requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -380,11 +338,135 @@ app.delete('/api/users/:id', requireAdmin, async (req, res) => {
   }
 });
 
-// ================== UPLOAD IMÁGENES ==================
-app.post('/api/upload', requireAdmin, upload.single('image'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'no_file' });
-  const url = `/uploads/${req.file.filename}`;
-  res.json({ ok: true, url });
+// ================== UPLOAD (Cloudinary) ==================
+app.post(
+  '/api/upload',
+  requireAdmin,
+  upload.single('image'),
+  async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'no_file' });
+
+      const result = await new Promise((resolve, reject) => {
+        cloudinary.uploader
+          .upload_stream(
+            {
+              folder: 'mrsmartservice',
+              resource_type: 'auto',
+            },
+            (err, uploaded) => {
+              if (err) reject(err);
+              else resolve(uploaded);
+            }
+          )
+          .end(req.file.buffer);
+      });
+
+      res.json({ url: result.secure_url });
+    } catch (e) {
+      console.error('upload error:', e);
+      res.status(500).json({ error: 'upload_failed' });
+    }
+  }
+);
+
+// ================== ADS (PUBLICIDAD HOME) ==================
+app.get('/api/ads', async (_req, res) => {
+  try {
+    const rows = await query(
+      `SELECT ad_id, title, description, video_url, image_url, active, created_at
+         FROM ads
+        WHERE active = TRUE
+        ORDER BY created_at DESC`
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error('GET /api/ads error:', e);
+    res.status(500).json({ error: 'ads_failed' });
+  }
+});
+
+app.post('/api/ads', requireAdmin, async (req, res) => {
+  try {
+    const { title, description, video_url, image_url, active } = req.body || {};
+
+    if (!title || !String(title).trim()) {
+      return res.status(400).json({ error: 'missing_title' });
+    }
+
+    const rows = await query(
+      `INSERT INTO ads (title, description, video_url, image_url, active)
+       VALUES ($1, $2, $3, $4, COALESCE($5, TRUE))
+       RETURNING ad_id, title, description, video_url, image_url, active, created_at`,
+      [
+        String(title).trim(),
+        (description || '').trim(),
+        (video_url || '').trim(),
+        (image_url || '').trim(),
+        typeof active === 'boolean' ? active : true,
+      ]
+    );
+
+    res.status(201).json(rows[0]);
+  } catch (e) {
+    console.error('POST /api/ads error:', e);
+    res.status(500).json({ error: 'ads_create_failed' });
+  }
+});
+
+app.put('/api/ads/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'bad_id' });
+
+    const fields = ['title', 'description', 'video_url', 'image_url', 'active'];
+    const sets = [];
+    const args = [];
+
+    for (const f of fields) {
+      if (req.body[f] !== undefined) {
+        sets.push(`${f} = $${sets.length + 1}`);
+        args.push(req.body[f]);
+      }
+    }
+
+    if (!sets.length) {
+      return res.status(400).json({ error: 'no_fields' });
+    }
+
+    sets.push(`updated_at = now()`);
+    args.push(id);
+
+    const rows = await query(
+      `UPDATE ads
+          SET ${sets.join(', ')}
+        WHERE ad_id = $${args.length}
+        RETURNING ad_id, title, description, video_url, image_url, active, created_at`,
+      args
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'ad_not_found' });
+    }
+
+    res.json(rows[0]);
+  } catch (e) {
+    console.error('PUT /api/ads/:id error:', e);
+    res.status(500).json({ error: 'ads_update_failed' });
+  }
+});
+
+app.delete('/api/ads/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'bad_id' });
+
+    await query('DELETE FROM ads WHERE ad_id = $1', [id]);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('DELETE /api/ads/:id error:', e);
+    res.status(500).json({ error: 'ads_delete_failed' });
+  }
 });
 
 // ================== PRODUCTS CRUD ==================
@@ -393,7 +475,28 @@ app.get('/api/products', async (_req, res) => {
     const rows = await query(
       'SELECT * FROM products WHERE active = TRUE ORDER BY product_id DESC'
     );
-    res.json(rows);
+
+    const now = new Date();
+
+    const data = rows.map((product) => {
+      let discount = Number(product.discount_percent || 0);
+
+      if (product.discount_start && product.discount_end) {
+        const start = new Date(product.discount_start);
+        const end = new Date(product.discount_end);
+
+        if (now < start || now > end) {
+          discount = 0; // fuera de rango → sin descuento
+        }
+      }
+
+      return {
+        ...product,
+        discount_percent: discount,
+      };
+    });
+
+    res.json(data);
   } catch (e) {
     console.warn('DB off? get/products fallback []', e?.message);
     res.json([]);
@@ -408,13 +511,28 @@ app.post('/api/products', requireAdmin, async (req, res) => {
       stock,
       discount_percent = 0,
       image_url,
+      video_url,
       category,
+      discount_start,
+      discount_end,
     } = req.body;
 
     const rows = await query(
-      `INSERT INTO products(name, price, stock, discount_percent, image_url, category)
-       VALUES($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [name, price, stock, discount_percent, image_url, category]
+      `INSERT INTO products
+         (name, price, stock, discount_percent, image_url, video_url, category, discount_start, discount_end)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       RETURNING *`,
+      [
+        name,
+        price,
+        stock,
+        discount_percent,
+        image_url,
+        video_url,
+        category,
+        discount_start || null,
+        discount_end || null,
+      ]
     );
 
     res.json(rows[0]);
@@ -433,8 +551,11 @@ app.put('/api/products/:id', requireAdmin, async (req, res) => {
       'stock',
       'discount_percent',
       'image_url',
+      'video_url',
       'category',
       'active',
+      'discount_start',
+      'discount_end',
     ];
     const sets = [];
     const args = [];
@@ -478,7 +599,7 @@ app.delete('/api/products/:id', requireAdmin, async (req, res) => {
   }
 });
 
-// ================== RESEÑAS DE PRODUCTOS ==================
+// ================== RESEÑAS ==================
 app.get('/api/products/:id/reviews', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -536,7 +657,7 @@ app.post('/api/products/:id/reviews', async (req, res) => {
   }
 });
 
-// ================== PAYMENTS (Mercado Pago v2) ==================
+// ================== PAYMENTS / MERCADO PAGO ==================
 app.post('/api/payments/create', async (req, res) => {
   try {
     if (!has(process.env.MP_ACCESS_TOKEN)) {
@@ -549,7 +670,7 @@ app.post('/api/payments/create', async (req, res) => {
     const norm = items.map((i) => {
       const hasPid = i.product_id !== undefined && i.product_id !== null;
       return {
-        product_id: hasPid ? Number(i.product_id) : null, // puede ser null para ENVIO
+        product_id: hasPid ? Number(i.product_id) : null,
         title: String(i.title || 'Producto'),
         unit_price: Number(i.unit_price || 0),
         quantity: Number(i.quantity || 1),
@@ -557,7 +678,6 @@ app.post('/api/payments/create', async (req, res) => {
       };
     });
 
-    // product_id puede ser null (envío); si no es null debe ser numérico
     if (
       norm.some(
         (i) => i.product_id !== null && !Number.isFinite(i.product_id)
@@ -571,12 +691,16 @@ app.post('/api/payments/create', async (req, res) => {
       return res.status(400).json({ error: 'bad_price' });
     }
 
-    // Validar stock solo para productos reales
+    // Validar stock y aplicar descuentos desde la BD
+    const now = new Date();
+
     for (const item of norm) {
-      if (item.product_id === null) continue;
+      if (item.product_id === null) continue; // ej: envío
 
       const rows = await query(
-        'SELECT stock FROM products WHERE product_id = $1',
+        `SELECT name, price, stock, discount_percent, discount_start, discount_end
+           FROM products
+          WHERE product_id = $1`,
         [item.product_id]
       );
 
@@ -586,12 +710,33 @@ app.post('/api/payments/create', async (req, res) => {
           .json({ error: 'product_not_found', product_id: item.product_id });
       }
 
-      const stock = Number(rows[0].stock) || 0;
+      const prod = rows[0];
+      const stock = Number(prod.stock) || 0;
       if (stock < item.quantity) {
         return res
           .status(400)
           .json({ error: 'no_stock', product_id: item.product_id });
       }
+
+      let finalPrice = Number(prod.price) || 0;
+      let discount = Number(prod.discount_percent || 0);
+
+      if (prod.discount_start && prod.discount_end) {
+        const start = new Date(prod.discount_start);
+        const end = new Date(prod.discount_end);
+        if (now < start || now > end) {
+          discount = 0;
+        }
+      }
+
+      if (discount > 0) {
+        finalPrice = finalPrice * (1 - discount / 100);
+      }
+
+      finalPrice = Math.round(finalPrice); // COP entero
+
+      item.unit_price = finalPrice;
+      item.title = prod.name || item.title;
     }
 
     const back_urls = getBackUrls();
@@ -616,7 +761,6 @@ app.post('/api/payments/create', async (req, res) => {
       );
       orderId = orderRes.rows[0].order_id;
 
-      // IMPORTANTE: product_id puede ser NULL (para el item "Domicilio")
       for (const item of norm) {
         await client.query(
           `INSERT INTO order_items(order_id, product_id, quantity, unit_price)
@@ -636,7 +780,7 @@ app.post('/api/payments/create', async (req, res) => {
 
     const body = {
       items: norm.map((i) => ({
-        id: i.product_id !== null ? String(i.product_id) : 'ENVIO',
+        id: i.product_id !== null ? String(i.product_id) : 'EXTRA',
         title: i.title,
         unit_price: i.unit_price,
         quantity: i.quantity,
@@ -659,7 +803,6 @@ app.post('/api/payments/create', async (req, res) => {
 
     return res.json({ init_point: out.init_point });
   } catch (e) {
-    // Este catch atrapa tanto errores de MP como cualquier otro
     try {
       const status = e?.cause?.status;
       const body = e?.cause?.response ? await e.cause.response.json() : null;
@@ -703,7 +846,7 @@ app.post('/api/payments/webhook', async (req, res) => {
       if (pay.status === 'approved') {
         const items = pay.additional_info?.items || [];
 
-        // Descontar stock (ignora ítems sin product_id numérico)
+        // Descontar stock de productos reales
         for (const item of items) {
           const productId = Number(item.id);
           const qty = Number(item.quantity) || 0;
@@ -750,8 +893,35 @@ app.post('/api/payments/webhook', async (req, res) => {
 
   res.sendStatus(200);
 });
+// ================== REPORTES FINANCIEROS (PYTHON) ==================
+app.get('/api/reports/finanzas', requireAdmin, async (req, res) => {
+  try {
+    const format = req.query.format === 'pdf' ? 'pdf' : 'xlsx';
+    const pythonBase = process.env.PY_ANALYTICS_URL || 'http://localhost:5001';
+    const url = `${pythonBase}/reports/finanzas?formato=${format}`;
 
-// ================== ORDERS (para panel de ventas) ==================
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      console.error('❌ Python report error:', response.status);
+      return res.status(500).json({ error: 'report_failed' });
+    }
+
+    const contentType = response.headers.get('content-type') || 'application/octet-stream';
+    const contentDisp = response.headers.get('content-disposition') || `attachment; filename="reporte.${format}"`;
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', contentDisp);
+
+    response.body.pipe(res);
+  } catch (e) {
+    console.error('❌ /api/reports/finanzas error:', e);
+    res.status(500).json({ error: 'report_proxy_failed' });
+  }
+});
+
+
+// ================== ORDERS (panel ventas) ==================
 app.get('/api/orders', requireStaff, async (req, res) => {
   try {
     const { status, q, from, to } = req.query;
@@ -804,8 +974,9 @@ app.get('/api/orders', requireStaff, async (req, res) => {
   }
 });
 
-// ================== STATS (dashboard admin/dev) ==================
-app.get('/api/stats/sales', requireStaff, async (req, res) => {
+// ================== STATS (panel estadísticas) ==================
+// Ahora SOLO ADMIN
+app.get('/api/stats/sales', requireAdmin, async (req, res) => {
   try {
     const range = req.query.range || 'month';
 
