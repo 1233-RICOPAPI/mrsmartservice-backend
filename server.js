@@ -896,29 +896,45 @@ app.post('/api/payments/webhook', async (req, res) => {
 // ================== REPORTES FINANCIEROS (PYTHON) ==================
 app.get('/api/reports/finanzas', requireAdmin, async (req, res) => {
   try {
+    // format viene del front: 'pdf' o 'xlsx'
     const format = req.query.format === 'pdf' ? 'pdf' : 'xlsx';
-    const pythonBase = process.env.PY_ANALYTICS_URL || 'http://localhost:5001';
-    const url = `${pythonBase}/reports/finanzas?formato=${format}`;
 
-    const response = await fetch(url);
+    // URL base del microservicio Python (configurar en .env en Render)
+    const pythonBase = process.env.PY_ANALYTICS_URL || 'http://127.0.0.1:5001';
 
-    if (!response.ok) {
-      console.error('❌ Python report error:', response.status);
-      return res.status(500).json({ error: 'report_failed' });
+    // Cabecera secreta para autenticar a Python (configurar REPORT_SECRET en .env)
+    const reportSecret = process.env.REPORT_SECRET || '';
+
+    const url = `${pythonBase}/reports/finanzas?formato=${encodeURIComponent(format)}`;
+
+    const proxRes = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'X-REPORT-SECRET': reportSecret
+      }
+    });
+
+    if (!proxRes.ok) {
+      const txt = await proxRes.text().catch(()=>null);
+      console.error('Python report failed', proxRes.status, txt);
+      return res.status(502).json({ error: 'report_downstream_failed', status: proxRes.status });
     }
 
-    const contentType = response.headers.get('content-type') || 'application/octet-stream';
-    const contentDisp = response.headers.get('content-disposition') || `attachment; filename="reporte.${format}"`;
+    // Forward headers and stream body
+    const contentType = proxRes.headers.get('content-type') || 'application/octet-stream';
+    const contentDisp = proxRes.headers.get('content-disposition') || `attachment; filename="reporte.${format}"`;
 
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', contentDisp);
 
-    response.body.pipe(res);
-  } catch (e) {
-    console.error('❌ /api/reports/finanzas error:', e);
-    res.status(500).json({ error: 'report_proxy_failed' });
+    // pipe stream
+    proxRes.body.pipe(res);
+  } catch (err) {
+    console.error('/api/reports/finanzas proxy error:', err);
+    res.status(500).json({ error: 'report_proxy_error' });
   }
 });
+
 
 
 // ================== ORDERS (panel ventas) ==================
