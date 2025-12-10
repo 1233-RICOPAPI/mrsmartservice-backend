@@ -13,6 +13,7 @@ import {
   login,
   requireAdmin,
   requireStaff,
+  requireAuth,
   requestPasswordReset,
   resetPassword,
 } from './auth.js';
@@ -28,10 +29,7 @@ cloudinary.config({
 const app = express();
 
 /**
- * CORS: permitir
- * - Netlify: https://sparkling-llama-c1c397.netlify.app
- * - Local front: http://localhost:5500 y http://127.0.0.1:5500
- * - Herramientas sin Origin (Postman, Thunder, etc.)
+ * CORS
  */
 const allowedOrigins = [
   'https://sparkling-llama-c1c397.netlify.app',
@@ -50,13 +48,19 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions)); // preflight
+app.options('*', cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 
+<<<<<<< HEAD
 // Servir archivos estáticos legacy (si aún tienes imágenes sueltas en /uploads)
 app.use('/uploads', express.static('uploads'));
 
 // ===== Multer (archivos en memoria, para Cloudinary) =====
+=======
+app.use('/uploads', express.static('uploads'));
+
+// ===== Multer (memoria, Cloudinary) =====
+>>>>>>> 7d6516c (Cambios nuevos)
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
@@ -64,18 +68,23 @@ const upload = multer({ storage });
 const has = (v) => typeof v === 'string' && v.trim().length > 0;
 const trimRightSlash = (u) => (u || '').trim().replace(/\/+$/, '');
 
-// FRONT_URL base (para back_urls de MP)
 function resolveFrontBase() {
   const env = trimRightSlash(process.env.FRONT_URL);
   if (has(env)) return env;
 
+<<<<<<< HEAD
   // Fallback SOLO local
+=======
+>>>>>>> 7d6516c (Cambios nuevos)
   const fallback = 'http://127.0.0.1:5500/Ecomerce/web';
   console.warn('⚠️ FRONT_URL no definido, usando fallback:', fallback);
   return fallback;
 }
 
+<<<<<<< HEAD
 // back_urls para auto_return
+=======
+>>>>>>> 7d6516c (Cambios nuevos)
 function getBackUrls() {
   const base = resolveFrontBase();
   if (!base) return null;
@@ -86,13 +95,31 @@ function getBackUrls() {
   };
 }
 
+<<<<<<< HEAD
+=======
+// ===== Helpers ciudad / Coordinadora =====
+function normalizeCity(ciudad) {
+  return (ciudad || '')
+    .toLowerCase()
+    .normalize('NFD') // separa acentos
+    .replace(/[\u0300-\u036f]/g, '') // quita acentos
+    .trim();
+}
+
+function isLocalCity(ciudad) {
+  const c = normalizeCity(ciudad);
+  // Local: Villavicencio / Acacías
+  return c === 'villavicencio' || c === 'acacias';
+}
+
+>>>>>>> 7d6516c (Cambios nuevos)
 // ===== Mercado Pago =====
 if (!has(process.env.MP_ACCESS_TOKEN)) {
   console.error('❌ Falta MP_ACCESS_TOKEN en .env');
 }
 const mp = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN });
 
-// ===== Seed admin por defecto =====
+// ===== Seed admin =====
 seedAdminOnce().catch((err) => console.error('seedAdminOnce error:', err));
 
 // ===== Health =====
@@ -171,7 +198,11 @@ app.post('/api/login', login);
 app.post('/api/auth/request-reset', requestPasswordReset);
 app.post('/api/auth/reset-password', resetPassword);
 
+<<<<<<< HEAD
 app.get('/api/me', requireStaff, async (req, res) => {
+=======
+app.get('/api/me', requireAuth, async (req, res) => {
+>>>>>>> 7d6516c (Cambios nuevos)
   try {
     const userId = req.user?.user_id ?? req.user?.sub ?? null;
     if (!userId) return res.status(401).json({ error: 'unauthorized' });
@@ -192,7 +223,11 @@ app.get('/api/me', requireStaff, async (req, res) => {
   }
 });
 
+<<<<<<< HEAD
 // ================== CAMBIO DE CONTRASEÑA (propia) ==================
+=======
+// ================== CAMBIO DE CONTRASEÑA ==================
+>>>>>>> 7d6516c (Cambios nuevos)
 app.post('/api/users/change-password', requireStaff, async (req, res) => {
   try {
     const userId = req.user?.user_id ?? req.user?.sub ?? null;
@@ -231,6 +266,7 @@ app.post('/api/users/change-password', requireStaff, async (req, res) => {
 });
 
 // ================== GESTIÓN DE USUARIOS PANEL ==================
+<<<<<<< HEAD
 // Ahora: SOLO crea empleados/invitados con rol USER
 app.post('/api/users', requireAdmin, async (req, res) => {
   try {
@@ -245,18 +281,40 @@ app.post('/api/users', requireAdmin, async (req, res) => {
     }
 
     const exists = await query('SELECT 1 FROM users WHERE email = $1', [email]);
+=======
+app.post('/api/users', requireAdmin, async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    const cleanPass  = String(password || '').trim();
+
+    if (!cleanEmail || !cleanPass) {
+      return res.status(400).json({ error: 'missing_email_or_password' });
+    }
+
+    if (cleanPass.length < 8) {
+      return res.status(400).json({ error: 'weak_password' });
+    }
+
+    const exists = await query('SELECT 1 FROM users WHERE email = $1', [cleanEmail]);
+>>>>>>> 7d6516c (Cambios nuevos)
     if (exists.length) {
       return res.status(400).json({ error: 'email_in_use' });
     }
 
+<<<<<<< HEAD
     const hash = await bcrypt.hash(password.trim(), 10);
     const finalRole = 'USER';
+=======
+    const hash = await bcrypt.hash(cleanPass, 10);
+>>>>>>> 7d6516c (Cambios nuevos)
 
     const rows = await query(
-      `INSERT INTO users(email, password_hash, role)
-       VALUES($1, $2, $3)
+      `INSERT INTO users (email, password_hash, role)
+       VALUES ($1, $2, 'USER')
        RETURNING user_id, email, role, created_at`,
-      [email, hash, finalRole]
+      [cleanEmail, hash]
     );
 
     res.status(201).json(rows[0]);
@@ -266,44 +324,66 @@ app.post('/api/users', requireAdmin, async (req, res) => {
   }
 });
 
+<<<<<<< HEAD
 app.post('/api/users/reset-password', requireStaff, async (req, res) => {
+=======
+app.post('/api/users', requireAdmin, async (req, res) => {
+>>>>>>> 7d6516c (Cambios nuevos)
   try {
-    const { email, newPassword } = req.body || {};
-    if (!email || !newPassword) {
-      return res.status(400).json({ error: 'missing_fields' });
+    const { email, password } = req.body || {};
+
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    const cleanPass  = String(password || '').trim();
+
+    if (!cleanEmail || !cleanPass) {
+      return res.status(400).json({ error: 'missing_email_or_password' });
     }
-    if (newPassword.length < 8) {
+
+    if (cleanPass.length < 8) {
       return res.status(400).json({ error: 'weak_password' });
     }
 
-    const rows = await query('SELECT user_id FROM users WHERE email = $1', [
-      email,
-    ]);
-    if (!rows.length) {
-      return res.status(404).json({ error: 'user_not_found' });
+    // 👉 Límite: máximo 3 usuarios con rol USER
+    const countRows = await query(
+      `SELECT COUNT(*)::int AS c FROM users WHERE role = 'USER'`
+    );
+    const currentUsers = countRows[0]?.c ?? 0;
+    if (currentUsers >= 3) {
+      return res.status(400).json({ error: 'user_limit_reached' });
     }
 
-    const hash = await bcrypt.hash(newPassword, 10);
-    await query('UPDATE users SET password_hash = $1 WHERE email = $2', [
-      hash,
-      email,
-    ]);
+    const exists = await query('SELECT 1 FROM users WHERE email = $1', [cleanEmail]);
+    if (exists.length) {
+      return res.status(400).json({ error: 'email_in_use' });
+    }
 
-    res.json({ success: true });
+    const hash = await bcrypt.hash(cleanPass, 10);
+
+    const rows = await query(
+      `INSERT INTO users (email, password_hash, role)
+       VALUES ($1, $2, 'USER')
+       RETURNING user_id, email, role, created_at`,
+      [cleanEmail, hash]
+    );
+
+    res.status(201).json(rows[0]);
   } catch (e) {
-    console.error('POST /api/users/reset-password error:', e);
-    res.status(500).json({ error: 'reset_failed' });
+    console.error('POST /api/users error:', e);
+    res.status(500).json({ error: 'user_create_failed' });
   }
 });
 
+<<<<<<< HEAD
 // Lista de usuarios administrativos (si la quieres seguir usando)
+=======
+
+>>>>>>> 7d6516c (Cambios nuevos)
 app.get('/api/users', requireStaff, async (_req, res) => {
   try {
     const rows = await query(
       `SELECT user_id, email, role, created_at
          FROM users
-        WHERE UPPER(role) IN ('ADMIN','DEV_ADMIN')
-        ORDER BY user_id ASC`
+         ORDER BY user_id ASC`
     );
     res.json(rows);
   } catch (e) {
@@ -326,7 +406,13 @@ app.delete('/api/users/:id', requireAdmin, async (req, res) => {
     }
 
     const email = String(rows[0].email || '').toLowerCase();
-    if (['admin@tienda.com', 'dev@tienda.com'].includes(email)) {
+
+    // 👉 protegidos: admin y tu dev principal
+    const protectedEmails = [
+      'admin@tienda.com',
+      'aaronmotta5@gmail.com',
+    ];
+    if (protectedEmails.includes(email)) {
       return res.status(400).json({ error: 'cannot_delete_seed' });
     }
 
@@ -338,12 +424,23 @@ app.delete('/api/users/:id', requireAdmin, async (req, res) => {
   }
 });
 
+<<<<<<< HEAD
 // ================== UPLOAD (Cloudinary) ==================
 app.post(
   '/api/upload',
   requireAdmin,
   upload.single('image'),
   async (req, res) => {
+=======
+
+// ================== UPLOAD (Cloudinary) ==================
+app.post(
+  '/api/upload',
+  requireStaff,     // 👉 ahora DEV_ADMIN también puede subir
+  upload.single('image'),
+  async (req, res) => {
+
+>>>>>>> 7d6516c (Cambios nuevos)
     try {
       if (!req.file) return res.status(400).json({ error: 'no_file' });
 
@@ -385,6 +482,24 @@ app.get('/api/ads', async (_req, res) => {
     res.status(500).json({ error: 'ads_failed' });
   }
 });
+<<<<<<< HEAD
+=======
+// Listado completo de anuncios para el panel (activos e inactivos)
+app.get('/api/ads/all', requireStaff, async (_req, res) => {
+  try {
+    const rows = await query(
+      `SELECT ad_id, title, description, video_url, image_url, active, created_at
+         FROM ads
+        ORDER BY created_at DESC`
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error('GET /api/ads/all error:', e);
+    res.status(500).json({ error: 'ads_failed' });
+  }
+});
+
+>>>>>>> 7d6516c (Cambios nuevos)
 
 app.post('/api/ads', requireAdmin, async (req, res) => {
   try {
@@ -462,6 +577,10 @@ app.delete('/api/ads/:id', requireAdmin, async (req, res) => {
     if (!id) return res.status(400).json({ error: 'bad_id' });
 
     await query('DELETE FROM ads WHERE ad_id = $1', [id]);
+<<<<<<< HEAD
+=======
+
+>>>>>>> 7d6516c (Cambios nuevos)
     res.json({ success: true });
   } catch (e) {
     console.error('DELETE /api/ads/:id error:', e);
@@ -475,7 +594,10 @@ app.get('/api/products', async (_req, res) => {
     const rows = await query(
       'SELECT * FROM products WHERE active = TRUE ORDER BY product_id DESC'
     );
+<<<<<<< HEAD
 
+=======
+>>>>>>> 7d6516c (Cambios nuevos)
     const now = new Date();
 
     const data = rows.map((product) => {
@@ -486,7 +608,11 @@ app.get('/api/products', async (_req, res) => {
         const end = new Date(product.discount_end);
 
         if (now < start || now > end) {
+<<<<<<< HEAD
           discount = 0; // fuera de rango → sin descuento
+=======
+          discount = 0;
+>>>>>>> 7d6516c (Cambios nuevos)
         }
       }
 
@@ -513,14 +639,24 @@ app.post('/api/products', requireAdmin, async (req, res) => {
       image_url,
       video_url,
       category,
+<<<<<<< HEAD
+=======
+      description,
+      tech_sheet,
+>>>>>>> 7d6516c (Cambios nuevos)
       discount_start,
       discount_end,
     } = req.body;
 
     const rows = await query(
       `INSERT INTO products
+<<<<<<< HEAD
          (name, price, stock, discount_percent, image_url, video_url, category, discount_start, discount_end)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+=======
+         (name, price, stock, discount_percent, image_url, video_url, category, description, tech_sheet, discount_start, discount_end)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+>>>>>>> 7d6516c (Cambios nuevos)
        RETURNING *`,
       [
         name,
@@ -530,6 +666,11 @@ app.post('/api/products', requireAdmin, async (req, res) => {
         image_url,
         video_url,
         category,
+<<<<<<< HEAD
+=======
+        description || null,
+        tech_sheet || null,
+>>>>>>> 7d6516c (Cambios nuevos)
         discount_start || null,
         discount_end || null,
       ]
@@ -556,7 +697,13 @@ app.put('/api/products/:id', requireAdmin, async (req, res) => {
       'active',
       'discount_start',
       'discount_end',
+<<<<<<< HEAD
+=======
+      'description',
+      'tech_sheet',
+>>>>>>> 7d6516c (Cambios nuevos)
     ];
+
     const sets = [];
     const args = [];
 
@@ -575,7 +722,7 @@ app.put('/api/products/:id', requireAdmin, async (req, res) => {
 
     const rows = await query(
       `UPDATE products
-         SET ${sets.join(',')}, updated_at=now()
+         SET ${sets.join(',')}, updated_at=NOW()
        WHERE product_id=$${args.length}
        RETURNING *`,
       args
@@ -600,30 +747,60 @@ app.delete('/api/products/:id', requireAdmin, async (req, res) => {
 });
 
 // ================== RESEÑAS ==================
+<<<<<<< HEAD
 app.get('/api/products/:id/reviews', async (req, res) => {
+=======
+app.get('/api/products', async (_req, res) => {
+>>>>>>> 7d6516c (Cambios nuevos)
   try {
-    const id = Number(req.params.id);
-    if (!id) return res.status(400).json({ error: 'bad_id' });
-
-    const reviews = await query(
-      `SELECT
-         review_id,
-         author_name AS name,
-         rating,
-         comment,
-         created_at
-       FROM product_reviews
-       WHERE product_id = $1
-       ORDER BY created_at DESC`,
-      [id]
+    const rows = await query(
+      `
+      SELECT
+        p.*,
+        COALESCE(r.avg_rating, 0)::float  AS avg_rating,
+        COALESCE(r.review_count, 0)::int  AS review_count
+      FROM products p
+      LEFT JOIN (
+        SELECT
+          product_id,
+          AVG(rating)::float AS avg_rating,
+          COUNT(*)::int      AS review_count
+        FROM product_reviews
+        GROUP BY product_id
+      ) r ON r.product_id = p.product_id
+      WHERE p.active = TRUE
+      ORDER BY p.product_id DESC
+      `
     );
 
-    res.json(reviews);
+    const now = new Date();
+
+    const data = rows.map((product) => {
+      let discount = Number(product.discount_percent || 0);
+
+      if (product.discount_start && product.discount_end) {
+        const start = new Date(product.discount_start);
+        const end   = new Date(product.discount_end);
+
+        // si estamos fuera de rango, se anula el descuento
+        if (now < start || now > end) {
+          discount = 0;
+        }
+      }
+
+      return {
+        ...product,
+        discount_percent: discount,
+      };
+    });
+
+    res.json(data);
   } catch (e) {
-    console.error('GET /api/products/:id/reviews error:', e);
-    res.status(500).json({ error: 'reviews_failed' });
+    console.warn('DB off? get/products fallback []', e?.message);
+    res.json([]);
   }
 });
+
 
 app.post('/api/products/:id/reviews', async (req, res) => {
   try {
@@ -664,9 +841,10 @@ app.post('/api/payments/create', async (req, res) => {
       return res.status(500).json({ error: 'missing_access_token' });
     }
 
-    const { items = [] } = req.body;
+    const { items = [], shipping = null } = req.body;
     if (!items.length) return res.status(400).json({ error: 'no_items' });
 
+    // Normalizar items
     const norm = items.map((i) => {
       const hasPid = i.product_id !== undefined && i.product_id !== null;
       return {
@@ -691,6 +869,7 @@ app.post('/api/payments/create', async (req, res) => {
       return res.status(400).json({ error: 'bad_price' });
     }
 
+<<<<<<< HEAD
     // Validar stock y aplicar descuentos desde la BD
     const now = new Date();
 
@@ -703,13 +882,38 @@ app.post('/api/payments/create', async (req, res) => {
           WHERE product_id = $1`,
         [item.product_id]
       );
+=======
+    // ===== Datos de domicilio / coordinadora =====
+    const baseMode     = shipping?.mode || null;   // 'domicilio' o 'local'
+    const domNombre    = shipping?.nombre || null;
+    const domDireccion = shipping?.direccion || null;
+    const domBarrio    = shipping?.barrio || null;
+    const domCiudad    = shipping?.ciudad || null;
+    const domTelefono  = shipping?.telefono || null;
+    const domNota      = shipping?.nota || null;
 
-      if (!rows.length) {
-        return res
-          .status(400)
-          .json({ error: 'product_not_found', product_id: item.product_id });
+    // NUEVO: costo y modo de carrier que vienen del front (opcional)
+    const shippingCost = Number(shipping?.shipping_cost || 0) || 0;
+    const rawCarrier   = (shipping?.carrier_mode || shipping?.carrier || '').toLowerCase() || null;
+>>>>>>> 7d6516c (Cambios nuevos)
+
+    // modo final en DB:
+    //  - null           => retiro en punto
+    //  - 'local'        => domicilio local (Vcio / Acacías)
+    //  - 'coordinadora' => envío por Coordinadora (otras ciudades)
+    let domModo   = null;
+    let fechaDom  = null;
+    let estadoDom = null;
+
+    if (baseMode === 'domicilio') {
+      if (rawCarrier === 'local' || rawCarrier === 'coordinadora') {
+        domModo = rawCarrier;
+      } else {
+        const esLocal = isLocalCity(domCiudad || '');
+        domModo = esLocal ? 'local' : 'coordinadora';
       }
 
+<<<<<<< HEAD
       const prod = rows[0];
       const stock = Number(prod.stock) || 0;
       if (stock < item.quantity) {
@@ -737,27 +941,65 @@ app.post('/api/payments/create', async (req, res) => {
 
       item.unit_price = finalPrice;
       item.title = prod.name || item.title;
+=======
+      fechaDom  = new Date();
+      estadoDom = 'pendiente';
+    } else {
+      domModo   = null;
+      fechaDom  = null;
+      estadoDom = null;
+>>>>>>> 7d6516c (Cambios nuevos)
     }
 
     const back_urls = getBackUrls();
     console.log('🟢 Back URLs (create):', back_urls);
     if (!back_urls) return res.status(500).json({ error: 'missing_front_url' });
 
+    // Total que registra la orden (solo productos, el envío se maneja aparte
+    // para no romper nada por ahora)
     const total = norm.reduce(
       (a, b) => a + b.unit_price * b.quantity,
       0
     );
 
+    // ===== Guardar orden + items =====
     const client = await pool.connect();
     let orderId;
     try {
       await client.query('BEGIN');
 
       const orderRes = await client.query(
-        `INSERT INTO orders(status, total_amount)
-         VALUES('pending', $1)
+        `INSERT INTO orders(
+           status,
+           total_amount,
+           domicilio_modo,
+           domicilio_nombre,
+           domicilio_direccion,
+           domicilio_barrio,
+           domicilio_ciudad,
+           domicilio_telefono,
+           domicilio_nota,
+           fecha_domicilio,
+           estado_domicilio
+         )
+         VALUES(
+           'pending',
+           $1,
+           $2,$3,$4,$5,$6,$7,$8,$9,$10
+         )
          RETURNING order_id`,
-        [total]
+        [
+          total,
+          domModo,       // 'local' | 'coordinadora' | null
+          domNombre,
+          domDireccion,
+          domBarrio,
+          domCiudad,
+          domTelefono,
+          domNota,
+          fechaDom,
+          estadoDom,
+        ]
       );
       orderId = orderRes.rows[0].order_id;
 
@@ -778,6 +1020,7 @@ app.post('/api/payments/create', async (req, res) => {
       client.release();
     }
 
+    // ===== Pref de Mercado Pago =====
     const body = {
       items: norm.map((i) => ({
         id: i.product_id !== null ? String(i.product_id) : 'EXTRA',
@@ -788,7 +1031,12 @@ app.post('/api/payments/create', async (req, res) => {
       })),
       binary_mode: true,
       back_urls,
-      metadata: { ts: Date.now(), order_id: orderId },
+      metadata: {
+        ts: Date.now(),
+        order_id: orderId,
+        carrier_mode: rawCarrier || domModo,
+        shipping_cost: shippingCost,
+      },
     };
 
     console.log('🟢 Body enviado a MP (create):', body);
@@ -821,7 +1069,6 @@ app.post('/api/payments/create', async (req, res) => {
   }
 });
 
-// ===== Webhook: actualizar orden + descontar stock =====
 app.post('/api/payments/webhook', async (req, res) => {
   try {
     const event = req.body;
@@ -846,7 +1093,10 @@ app.post('/api/payments/webhook', async (req, res) => {
       if (pay.status === 'approved') {
         const items = pay.additional_info?.items || [];
 
+<<<<<<< HEAD
         // Descontar stock de productos reales
+=======
+>>>>>>> 7d6516c (Cambios nuevos)
         for (const item of items) {
           const productId = Number(item.id);
           const qty = Number(item.quantity) || 0;
@@ -862,7 +1112,6 @@ app.post('/api/payments/webhook', async (req, res) => {
         }
       }
 
-      // Actualizar orden
       if (orderIdMeta) {
         await query(
           `UPDATE orders
@@ -899,6 +1148,7 @@ app.get('/api/reports/finanzas', requireAdmin, async (req, res) => {
     // format viene del front: 'pdf' o 'xlsx'
     const format = req.query.format === 'pdf' ? 'pdf' : 'xlsx';
 
+<<<<<<< HEAD
     // URL base del microservicio Python (configurar en .env en Render)
     const pythonBase = process.env.PY_ANALYTICS_URL || 'http://127.0.0.1:5001';
 
@@ -939,6 +1189,10 @@ app.get('/api/reports/finanzas', requireAdmin, async (req, res) => {
 
 // ================== ORDERS (panel ventas) ==================
 app.get('/api/orders', requireStaff, async (req, res) => {
+=======
+// ================== ORDERS (ventas / domicilios) ==================
+app.get('/api/orders', requireAuth, async (req, res) => {
+>>>>>>> 7d6516c (Cambios nuevos)
   try {
     const { status, q, from, to } = req.query;
 
@@ -975,7 +1229,16 @@ app.get('/api/orders', requireStaff, async (req, res) => {
         total_amount,
         status,
         COALESCE(payer_email, '') AS email,
-        'Cliente' AS customer
+        'Cliente' AS customer,
+        domicilio_modo,
+        domicilio_nombre,
+        domicilio_direccion,
+        domicilio_barrio,
+        domicilio_ciudad,
+        domicilio_telefono,
+        domicilio_nota,
+        fecha_domicilio,
+        estado_domicilio
       FROM orders
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
       ORDER BY created_at DESC, order_id DESC
@@ -990,9 +1253,14 @@ app.get('/api/orders', requireStaff, async (req, res) => {
   }
 });
 
+<<<<<<< HEAD
 // ================== STATS (panel estadísticas) ==================
 // Ahora SOLO ADMIN
 app.get('/api/stats/sales', requireAdmin, async (req, res) => {
+=======
+// ================== STATS (solo staff/admin) ==================
+app.get('/api/stats/sales', requireStaff, async (req, res) => {
+>>>>>>> 7d6516c (Cambios nuevos)
   try {
     const range = req.query.range || 'month';
 

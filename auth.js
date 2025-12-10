@@ -36,9 +36,11 @@ export async function seedAdminOnce() {
       [devEmail, devHash]
     );
 
-    console.log("✅ Seed usuarios listo:");
-    console.log("   Admin: admin@tienda.com / Admin12345!");
-    console.log("   Dev:   dev@tienda.com   / Dev12345!");
+  console.log("✅ Seed usuarios listo (creados si no existían):");
+  console.log("   Admin:", adminEmail);
+  console.log("   Dev:  ", devEmail);
+// 🔒 No mostramos las contraseñas en consola.
+
   } catch (err) {
     console.error("❌ Error en seedAdminOnce:", err.message);
   }
@@ -74,7 +76,11 @@ export async function login(req, res) {
       sub:     user.user_id,
       user_id: user.user_id,
       email:   user.email,
+<<<<<<< HEAD
       role:    user.role, // ADMIN / DEV_ADMIN / USER
+=======
+      role:    user.role, // puede ser ADMIN / DEV_ADMIN / STAFF / USER
+>>>>>>> 7d6516c (Cambios nuevos)
     };
 
     const token = jwt.sign(payload, process.env.JWT_SECRET, {
@@ -88,9 +94,28 @@ export async function login(req, res) {
   }
 }
 
-/* ================== MIDDLEwares ================== */
+/* ================== MIDDLEWARES ================== */
 
-// 🔒 Operaciones de “admin” → ADMIN y DEV_ADMIN
+// 🔒 requireAuth: cualquier usuario logueado (USER, ADMIN, etc.)
+export function requireAuth(req, res, next) {
+  const header = req.headers.authorization || "";
+  const token  = header.startsWith("Bearer ") ? header.slice(7) : null;
+
+  if (!token) {
+    return res.status(401).json({ error: "no_token" });
+  }
+
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = payload; // user_id, email, role, etc.
+    next();
+  } catch (err) {
+    console.error("❌ Token inválido:", err.message);
+    return res.status(401).json({ error: "token_invalid" });
+  }
+}
+
+// 🔒 requireAdmin: solo ADMIN y DEV_ADMIN (crear productos, anuncios, etc.)
 export function requireAdmin(req, res, next) {
   const header = req.headers.authorization || "";
   const token  = header.startsWith("Bearer ") ? header.slice(7) : null;
@@ -112,7 +137,8 @@ export function requireAdmin(req, res, next) {
   }
 }
 
-// Staff = ADMIN + DEV_ADMIN (stats, ventas, perfil…)
+// 🔒 requireStaff: ADMIN + DEV_ADMIN + STAFF (stats, usuarios, perfil…)
+//   NO permite USER.
 export function requireStaff(req, res, next) {
   const header = req.headers.authorization || "";
   const token  = header.startsWith("Bearer ") ? header.slice(7) : null;
@@ -123,7 +149,9 @@ export function requireStaff(req, res, next) {
     const payload   = jwt.verify(token, process.env.JWT_SECRET);
     const roleUpper = String(payload.role || "").toUpperCase();
 
-    if (!["ADMIN", "DEV_ADMIN"].includes(roleUpper)) {
+    const allowed = ["ADMIN", "DEV_ADMIN", "STAFF"]; // NO USER
+
+    if (!allowed.includes(roleUpper)) {
       return res.status(403).json({ error: "forbidden" });
     }
 
