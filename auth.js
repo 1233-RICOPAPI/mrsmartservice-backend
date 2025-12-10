@@ -36,11 +36,10 @@ export async function seedAdminOnce() {
       [devEmail, devHash]
     );
 
-  console.log("✅ Seed usuarios listo (creados si no existían):");
-  console.log("   Admin:", adminEmail);
-  console.log("   Dev:  ", devEmail);
-// 🔒 No mostramos las contraseñas en consola.
-
+    console.log("✅ Seed usuarios listo (creados si no existían):");
+    console.log("   Admin:", adminEmail);
+    console.log("   Dev:  ", devEmail);
+    // 🔒 No mostramos las contraseñas en consola.
   } catch (err) {
     console.error("❌ Error en seedAdminOnce:", err.message);
   }
@@ -76,11 +75,7 @@ export async function login(req, res) {
       sub:     user.user_id,
       user_id: user.user_id,
       email:   user.email,
-<<<<<<< HEAD
-      role:    user.role, // ADMIN / DEV_ADMIN / USER
-=======
       role:    user.role, // puede ser ADMIN / DEV_ADMIN / STAFF / USER
->>>>>>> 7d6516c (Cambios nuevos)
     };
 
     const token = jwt.sign(payload, process.env.JWT_SECRET, {
@@ -205,8 +200,6 @@ export async function requestPasswordReset(req, res) {
 
     // Solo permitimos reset a staff (ADMIN / DEV_ADMIN)
     if (!["ADMIN", "DEV_ADMIN"].includes(roleUpper)) {
-      // Aquí podrías devolver 403 si quieres mensaje especial:
-      // return res.status(403).json({ error: "only_staff_can_reset" });
       return res.json({ ok: true });
     }
 
@@ -269,15 +262,12 @@ export async function requestPasswordReset(req, res) {
       console.error("❌ Faltan variables SMTP en .env (modo debug sin correo)");
     }
 
-    // En producción: no exponemos el enlace
-    // En desarrollo: lo devolvemos para que lo veas en la consola JS del front
     return res.json({
       ok: true,
       resetUrl: isDev ? resetUrl : undefined,
     });
   } catch (err) {
     console.error("❌ requestPasswordReset error:", err);
-    // No damos detalles al front para no filtrar info
     return res.status(500).json({ error: "server_error" });
   }
 }

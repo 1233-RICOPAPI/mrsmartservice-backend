@@ -4,16 +4,10 @@ import { pool } from './db.js';
 const SQL = `
 -- ================== USERS ==================
 CREATE TABLE IF NOT EXISTS users (
-<<<<<<< HEAD
-  user_id SERIAL PRIMARY KEY,
-  email TEXT UNIQUE NOT NULL,
-  password_hash TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'USER',
-=======
   user_id        SERIAL PRIMARY KEY,
   email          TEXT UNIQUE NOT NULL,
   password_hash  TEXT NOT NULL,
-  role           TEXT NOT NULL DEFAULT 'ADMIN',
+  role           TEXT NOT NULL DEFAULT 'USER',
   created_at     TIMESTAMP NOT NULL DEFAULT now()
 );
 
@@ -40,10 +34,11 @@ CREATE TABLE IF NOT EXISTS ads (
   ad_id       SERIAL PRIMARY KEY,
   title       TEXT NOT NULL,
   description TEXT,
-  video_url   TEXT NOT NULL,
+  video_url   TEXT,
   image_url   TEXT,
   active      BOOLEAN   NOT NULL DEFAULT TRUE,
-  created_at  TIMESTAMP NOT NULL DEFAULT now()
+  created_at  TIMESTAMP NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMP NOT NULL DEFAULT now()
 );
 
 -- ================== ORDERS ==================
@@ -73,7 +68,6 @@ CREATE TABLE IF NOT EXISTS password_resets (
   token      TEXT UNIQUE NOT NULL,
   expires_at TIMESTAMP NOT NULL,
   used       BOOLEAN  NOT NULL DEFAULT FALSE,
->>>>>>> 7d6516c (Cambios nuevos)
   created_at TIMESTAMP NOT NULL DEFAULT now()
 );
 

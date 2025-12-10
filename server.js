@@ -1,4 +1,3 @@
-// api/server.js
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -18,19 +17,14 @@ import {
   resetPassword,
 } from './auth.js';
 
-// ================== CLOUDINARY ==================
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key:    process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// ===== App base =====
 const app = express();
 
-/**
- * CORS
- */
 const allowedOrigins = [
   'https://mr-smart-service.netlify.app',
   'http://localhost:5500',
@@ -51,16 +45,9 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 
-<<<<<<< HEAD
-// Servir archivos estáticos legacy (si aún tienes imágenes sueltas en /uploads)
+// Archivos estáticos legacy
 app.use('/uploads', express.static('uploads'));
 
-// ===== Multer (archivos en memoria, para Cloudinary) =====
-=======
-app.use('/uploads', express.static('uploads'));
-
-// ===== Multer (memoria, Cloudinary) =====
->>>>>>> 7d6516c (Cambios nuevos)
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
@@ -68,23 +55,18 @@ const upload = multer({ storage });
 const has = (v) => typeof v === 'string' && v.trim().length > 0;
 const trimRightSlash = (u) => (u || '').trim().replace(/\/+$/, '');
 
+// Base del front (Netlify o local)
 function resolveFrontBase() {
   const env = trimRightSlash(process.env.FRONT_URL);
   if (has(env)) return env;
 
-<<<<<<< HEAD
   // Fallback SOLO local
-=======
->>>>>>> 7d6516c (Cambios nuevos)
   const fallback = 'http://127.0.0.1:5500/Ecomerce/web';
   console.warn('⚠️ FRONT_URL no definido, usando fallback:', fallback);
   return fallback;
 }
 
-<<<<<<< HEAD
 // back_urls para auto_return
-=======
->>>>>>> 7d6516c (Cambios nuevos)
 function getBackUrls() {
   const base = resolveFrontBase();
   if (!base) return null;
@@ -95,14 +77,12 @@ function getBackUrls() {
   };
 }
 
-<<<<<<< HEAD
-=======
 // ===== Helpers ciudad / Coordinadora =====
 function normalizeCity(ciudad) {
   return (ciudad || '')
     .toLowerCase()
-    .normalize('NFD') // separa acentos
-    .replace(/[\u0300-\u036f]/g, '') // quita acentos
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
     .trim();
 }
 
@@ -112,7 +92,6 @@ function isLocalCity(ciudad) {
   return c === 'villavicencio' || c === 'acacias';
 }
 
->>>>>>> 7d6516c (Cambios nuevos)
 // ===== Mercado Pago =====
 if (!has(process.env.MP_ACCESS_TOKEN)) {
   console.error('❌ Falta MP_ACCESS_TOKEN en .env');
@@ -122,10 +101,12 @@ const mp = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN });
 // ===== Seed admin =====
 seedAdminOnce().catch((err) => console.error('seedAdminOnce error:', err));
 
-// ===== Health =====
+/* =========================================
+   HEALTH & DEBUG
+========================================= */
+
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
-// ===== Debug env =====
 app.get('/api/debug/env', (_req, res) => {
   res.json({
     has_access_token: has(process.env.MP_ACCESS_TOKEN),
@@ -134,7 +115,6 @@ app.get('/api/debug/env', (_req, res) => {
   });
 });
 
-// ===== Debug Mercado Pago =====
 app.get('/api/debug/mp', async (_req, res) => {
   try {
     const back_urls = getBackUrls();
@@ -192,17 +172,16 @@ app.get('/api/debug/mp', async (_req, res) => {
   }
 });
 
-// ================== AUTH ==================
-app.post('/api/login', login);
+/* =========================================
+   AUTH
+========================================= */
 
+app.post('/api/login', login);
 app.post('/api/auth/request-reset', requestPasswordReset);
 app.post('/api/auth/reset-password', resetPassword);
 
-<<<<<<< HEAD
-app.get('/api/me', requireStaff, async (req, res) => {
-=======
+// Info del usuario logueado (cualquier rol)
 app.get('/api/me', requireAuth, async (req, res) => {
->>>>>>> 7d6516c (Cambios nuevos)
   try {
     const userId = req.user?.user_id ?? req.user?.sub ?? null;
     if (!userId) return res.status(401).json({ error: 'unauthorized' });
@@ -223,11 +202,7 @@ app.get('/api/me', requireAuth, async (req, res) => {
   }
 });
 
-<<<<<<< HEAD
-// ================== CAMBIO DE CONTRASEÑA (propia) ==================
-=======
-// ================== CAMBIO DE CONTRASEÑA ==================
->>>>>>> 7d6516c (Cambios nuevos)
+// Cambiar contraseña propia (solo staff: ADMIN / DEV_ADMIN / STAFF)
 app.post('/api/users/change-password', requireStaff, async (req, res) => {
   try {
     const userId = req.user?.user_id ?? req.user?.sub ?? null;
@@ -265,23 +240,7 @@ app.post('/api/users/change-password', requireStaff, async (req, res) => {
   }
 });
 
-// ================== GESTIÓN DE USUARIOS PANEL ==================
-<<<<<<< HEAD
-// Ahora: SOLO crea empleados/invitados con rol USER
-app.post('/api/users', requireAdmin, async (req, res) => {
-  try {
-    const { email, password } = req.body || {};
-    if (!email) return res.status(400).json({ error: 'missing_email' });
-
-    if (!password || typeof password !== 'string' || !password.trim().length) {
-      return res.status(400).json({ error: 'missing_password' });
-    }
-    if (password.length < 8) {
-      return res.status(400).json({ error: 'weak_password' });
-    }
-
-    const exists = await query('SELECT 1 FROM users WHERE email = $1', [email]);
-=======
+// Crear empleados/invitados rol USER (solo ADMIN / DEV_ADMIN)
 app.post('/api/users', requireAdmin, async (req, res) => {
   try {
     const { email, password } = req.body || {};
@@ -297,53 +256,7 @@ app.post('/api/users', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'weak_password' });
     }
 
-    const exists = await query('SELECT 1 FROM users WHERE email = $1', [cleanEmail]);
->>>>>>> 7d6516c (Cambios nuevos)
-    if (exists.length) {
-      return res.status(400).json({ error: 'email_in_use' });
-    }
-
-<<<<<<< HEAD
-    const hash = await bcrypt.hash(password.trim(), 10);
-    const finalRole = 'USER';
-=======
-    const hash = await bcrypt.hash(cleanPass, 10);
->>>>>>> 7d6516c (Cambios nuevos)
-
-    const rows = await query(
-      `INSERT INTO users (email, password_hash, role)
-       VALUES ($1, $2, 'USER')
-       RETURNING user_id, email, role, created_at`,
-      [cleanEmail, hash]
-    );
-
-    res.status(201).json(rows[0]);
-  } catch (e) {
-    console.error('POST /api/users error:', e);
-    res.status(500).json({ error: 'user_create_failed' });
-  }
-});
-
-<<<<<<< HEAD
-app.post('/api/users/reset-password', requireStaff, async (req, res) => {
-=======
-app.post('/api/users', requireAdmin, async (req, res) => {
->>>>>>> 7d6516c (Cambios nuevos)
-  try {
-    const { email, password } = req.body || {};
-
-    const cleanEmail = String(email || '').trim().toLowerCase();
-    const cleanPass  = String(password || '').trim();
-
-    if (!cleanEmail || !cleanPass) {
-      return res.status(400).json({ error: 'missing_email_or_password' });
-    }
-
-    if (cleanPass.length < 8) {
-      return res.status(400).json({ error: 'weak_password' });
-    }
-
-    // 👉 Límite: máximo 3 usuarios con rol USER
+    // límite: máximo 3 usuarios con rol USER
     const countRows = await query(
       `SELECT COUNT(*)::int AS c FROM users WHERE role = 'USER'`
     );
@@ -373,11 +286,7 @@ app.post('/api/users', requireAdmin, async (req, res) => {
   }
 });
 
-<<<<<<< HEAD
-// Lista de usuarios administrativos (si la quieres seguir usando)
-=======
-
->>>>>>> 7d6516c (Cambios nuevos)
+// Lista de usuarios (panel admin/dev/staff)
 app.get('/api/users', requireStaff, async (_req, res) => {
   try {
     const rows = await query(
@@ -392,6 +301,7 @@ app.get('/api/users', requireStaff, async (_req, res) => {
   }
 });
 
+// Borrar usuario (solo ADMIN / DEV_ADMIN), pero protegiendo seed
 app.delete('/api/users/:id', requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -407,7 +317,7 @@ app.delete('/api/users/:id', requireAdmin, async (req, res) => {
 
     const email = String(rows[0].email || '').toLowerCase();
 
-    // 👉 protegidos: admin y tu dev principal
+    // protegidos: admin y tu dev principal
     const protectedEmails = [
       'admin@tienda.com',
       'aaronmotta5@gmail.com',
@@ -424,23 +334,15 @@ app.delete('/api/users/:id', requireAdmin, async (req, res) => {
   }
 });
 
-<<<<<<< HEAD
-// ================== UPLOAD (Cloudinary) ==================
+/* =========================================
+   UPLOAD (Cloudinary)
+========================================= */
+
 app.post(
   '/api/upload',
-  requireAdmin,
+  requireStaff, // ADMIN / DEV_ADMIN / STAFF
   upload.single('image'),
   async (req, res) => {
-=======
-
-// ================== UPLOAD (Cloudinary) ==================
-app.post(
-  '/api/upload',
-  requireStaff,     // 👉 ahora DEV_ADMIN también puede subir
-  upload.single('image'),
-  async (req, res) => {
-
->>>>>>> 7d6516c (Cambios nuevos)
     try {
       if (!req.file) return res.status(400).json({ error: 'no_file' });
 
@@ -467,7 +369,10 @@ app.post(
   }
 );
 
-// ================== ADS (PUBLICIDAD HOME) ==================
+/* =========================================
+   ADS (PUBLICIDAD HOME)
+========================================= */
+
 app.get('/api/ads', async (_req, res) => {
   try {
     const rows = await query(
@@ -482,8 +387,7 @@ app.get('/api/ads', async (_req, res) => {
     res.status(500).json({ error: 'ads_failed' });
   }
 });
-<<<<<<< HEAD
-=======
+
 // Listado completo de anuncios para el panel (activos e inactivos)
 app.get('/api/ads/all', requireStaff, async (_req, res) => {
   try {
@@ -498,8 +402,6 @@ app.get('/api/ads/all', requireStaff, async (_req, res) => {
     res.status(500).json({ error: 'ads_failed' });
   }
 });
-
->>>>>>> 7d6516c (Cambios nuevos)
 
 app.post('/api/ads', requireAdmin, async (req, res) => {
   try {
@@ -577,10 +479,6 @@ app.delete('/api/ads/:id', requireAdmin, async (req, res) => {
     if (!id) return res.status(400).json({ error: 'bad_id' });
 
     await query('DELETE FROM ads WHERE ad_id = $1', [id]);
-<<<<<<< HEAD
-=======
-
->>>>>>> 7d6516c (Cambios nuevos)
     res.json({ success: true });
   } catch (e) {
     console.error('DELETE /api/ads/:id error:', e);
@@ -588,16 +486,33 @@ app.delete('/api/ads/:id', requireAdmin, async (req, res) => {
   }
 });
 
-// ================== PRODUCTS CRUD ==================
+/* =========================================
+   PRODUCTS CRUD + REVIEWS
+========================================= */
+
+// Productos con rating promedio y descuento validado por fechas
 app.get('/api/products', async (_req, res) => {
   try {
     const rows = await query(
-      'SELECT * FROM products WHERE active = TRUE ORDER BY product_id DESC'
+      `
+      SELECT
+        p.*,
+        COALESCE(r.avg_rating, 0)::float  AS avg_rating,
+        COALESCE(r.review_count, 0)::int  AS review_count
+      FROM products p
+      LEFT JOIN (
+        SELECT
+          product_id,
+          AVG(rating)::float AS avg_rating,
+          COUNT(*)::int      AS review_count
+        FROM product_reviews
+        GROUP BY product_id
+      ) r ON r.product_id = p.product_id
+      WHERE p.active = TRUE
+      ORDER BY p.product_id DESC
+      `
     );
-<<<<<<< HEAD
 
-=======
->>>>>>> 7d6516c (Cambios nuevos)
     const now = new Date();
 
     const data = rows.map((product) => {
@@ -605,14 +520,11 @@ app.get('/api/products', async (_req, res) => {
 
       if (product.discount_start && product.discount_end) {
         const start = new Date(product.discount_start);
-        const end = new Date(product.discount_end);
+        const end   = new Date(product.discount_end);
 
+        // fuera de rango → sin descuento
         if (now < start || now > end) {
-<<<<<<< HEAD
-          discount = 0; // fuera de rango → sin descuento
-=======
           discount = 0;
->>>>>>> 7d6516c (Cambios nuevos)
         }
       }
 
@@ -629,6 +541,7 @@ app.get('/api/products', async (_req, res) => {
   }
 });
 
+// Crear producto
 app.post('/api/products', requireAdmin, async (req, res) => {
   try {
     const {
@@ -639,24 +552,16 @@ app.post('/api/products', requireAdmin, async (req, res) => {
       image_url,
       video_url,
       category,
-<<<<<<< HEAD
-=======
       description,
       tech_sheet,
->>>>>>> 7d6516c (Cambios nuevos)
       discount_start,
       discount_end,
     } = req.body;
 
     const rows = await query(
       `INSERT INTO products
-<<<<<<< HEAD
-         (name, price, stock, discount_percent, image_url, video_url, category, discount_start, discount_end)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
-=======
          (name, price, stock, discount_percent, image_url, video_url, category, description, tech_sheet, discount_start, discount_end)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
->>>>>>> 7d6516c (Cambios nuevos)
        RETURNING *`,
       [
         name,
@@ -666,11 +571,8 @@ app.post('/api/products', requireAdmin, async (req, res) => {
         image_url,
         video_url,
         category,
-<<<<<<< HEAD
-=======
         description || null,
         tech_sheet || null,
->>>>>>> 7d6516c (Cambios nuevos)
         discount_start || null,
         discount_end || null,
       ]
@@ -683,6 +585,7 @@ app.post('/api/products', requireAdmin, async (req, res) => {
   }
 });
 
+// Actualizar producto
 app.put('/api/products/:id', requireAdmin, async (req, res) => {
   try {
     const id = +req.params.id;
@@ -697,11 +600,8 @@ app.put('/api/products/:id', requireAdmin, async (req, res) => {
       'active',
       'discount_start',
       'discount_end',
-<<<<<<< HEAD
-=======
       'description',
       'tech_sheet',
->>>>>>> 7d6516c (Cambios nuevos)
     ];
 
     const sets = [];
@@ -735,6 +635,7 @@ app.put('/api/products/:id', requireAdmin, async (req, res) => {
   }
 });
 
+// Borrar producto
 app.delete('/api/products/:id', requireAdmin, async (req, res) => {
   try {
     const id = +req.params.id;
@@ -746,62 +647,28 @@ app.delete('/api/products/:id', requireAdmin, async (req, res) => {
   }
 });
 
-// ================== RESEÑAS ==================
-<<<<<<< HEAD
+// Listar reseñas de un producto
 app.get('/api/products/:id/reviews', async (req, res) => {
-=======
-app.get('/api/products', async (_req, res) => {
->>>>>>> 7d6516c (Cambios nuevos)
   try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'bad_id' });
+
     const rows = await query(
-      `
-      SELECT
-        p.*,
-        COALESCE(r.avg_rating, 0)::float  AS avg_rating,
-        COALESCE(r.review_count, 0)::int  AS review_count
-      FROM products p
-      LEFT JOIN (
-        SELECT
-          product_id,
-          AVG(rating)::float AS avg_rating,
-          COUNT(*)::int      AS review_count
-        FROM product_reviews
-        GROUP BY product_id
-      ) r ON r.product_id = p.product_id
-      WHERE p.active = TRUE
-      ORDER BY p.product_id DESC
-      `
+      `SELECT review_id, author_name AS name, rating, comment, created_at
+         FROM product_reviews
+        WHERE product_id = $1
+        ORDER BY created_at DESC`,
+      [id]
     );
 
-    const now = new Date();
-
-    const data = rows.map((product) => {
-      let discount = Number(product.discount_percent || 0);
-
-      if (product.discount_start && product.discount_end) {
-        const start = new Date(product.discount_start);
-        const end   = new Date(product.discount_end);
-
-        // si estamos fuera de rango, se anula el descuento
-        if (now < start || now > end) {
-          discount = 0;
-        }
-      }
-
-      return {
-        ...product,
-        discount_percent: discount,
-      };
-    });
-
-    res.json(data);
+    res.json(rows);
   } catch (e) {
-    console.warn('DB off? get/products fallback []', e?.message);
-    res.json([]);
+    console.error('GET /api/products/:id/reviews error:', e);
+    res.status(500).json({ error: 'reviews_failed' });
   }
 });
 
-
+// Crear reseña
 app.post('/api/products/:id/reviews', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -834,7 +701,10 @@ app.post('/api/products/:id/reviews', async (req, res) => {
   }
 });
 
-// ================== PAYMENTS / MERCADO PAGO ==================
+/* =========================================
+   PAYMENTS / MERCADO PAGO
+========================================= */
+
 app.post('/api/payments/create', async (req, res) => {
   try {
     if (!has(process.env.MP_ACCESS_TOKEN)) {
@@ -869,7 +739,6 @@ app.post('/api/payments/create', async (req, res) => {
       return res.status(400).json({ error: 'bad_price' });
     }
 
-<<<<<<< HEAD
     // Validar stock y aplicar descuentos desde la BD
     const now = new Date();
 
@@ -882,38 +751,13 @@ app.post('/api/payments/create', async (req, res) => {
           WHERE product_id = $1`,
         [item.product_id]
       );
-=======
-    // ===== Datos de domicilio / coordinadora =====
-    const baseMode     = shipping?.mode || null;   // 'domicilio' o 'local'
-    const domNombre    = shipping?.nombre || null;
-    const domDireccion = shipping?.direccion || null;
-    const domBarrio    = shipping?.barrio || null;
-    const domCiudad    = shipping?.ciudad || null;
-    const domTelefono  = shipping?.telefono || null;
-    const domNota      = shipping?.nota || null;
 
-    // NUEVO: costo y modo de carrier que vienen del front (opcional)
-    const shippingCost = Number(shipping?.shipping_cost || 0) || 0;
-    const rawCarrier   = (shipping?.carrier_mode || shipping?.carrier || '').toLowerCase() || null;
->>>>>>> 7d6516c (Cambios nuevos)
-
-    // modo final en DB:
-    //  - null           => retiro en punto
-    //  - 'local'        => domicilio local (Vcio / Acacías)
-    //  - 'coordinadora' => envío por Coordinadora (otras ciudades)
-    let domModo   = null;
-    let fechaDom  = null;
-    let estadoDom = null;
-
-    if (baseMode === 'domicilio') {
-      if (rawCarrier === 'local' || rawCarrier === 'coordinadora') {
-        domModo = rawCarrier;
-      } else {
-        const esLocal = isLocalCity(domCiudad || '');
-        domModo = esLocal ? 'local' : 'coordinadora';
+      if (!rows.length) {
+        return res
+          .status(400)
+          .json({ error: 'product_not_found', product_id: item.product_id });
       }
 
-<<<<<<< HEAD
       const prod = rows[0];
       const stock = Number(prod.stock) || 0;
       if (stock < item.quantity) {
@@ -941,22 +785,51 @@ app.post('/api/payments/create', async (req, res) => {
 
       item.unit_price = finalPrice;
       item.title = prod.name || item.title;
-=======
+    }
+
+    // ===== Datos de domicilio / coordinadora =====
+    const baseMode     = shipping?.mode || null;   // 'domicilio' o null
+    const domNombre    = shipping?.nombre || null;
+    const domDireccion = shipping?.direccion || null;
+    const domBarrio    = shipping?.barrio || null;
+    const domCiudad    = shipping?.ciudad || null;
+    const domTelefono  = shipping?.telefono || null;
+    const domNota      = shipping?.nota || null;
+
+    // costo y modo de carrier que vienen del front (opcional)
+    const shippingCost = Number(shipping?.shipping_cost || 0) || 0;
+    const rawCarrier   = (shipping?.carrier_mode || shipping?.carrier || '')
+      .toLowerCase() || null;
+
+    // modo final en DB:
+    //  - null           => retiro en punto
+    //  - 'local'        => domicilio local (Vcio / Acacías)
+    //  - 'coordinadora' => envío por Coordinadora (otras ciudades)
+    let domModo   = null;
+    let fechaDom  = null;
+    let estadoDom = null;
+
+    if (baseMode === 'domicilio') {
+      if (rawCarrier === 'local' || rawCarrier === 'coordinadora') {
+        domModo = rawCarrier;
+      } else {
+        const esLocal = isLocalCity(domCiudad || '');
+        domModo = esLocal ? 'local' : 'coordinadora';
+      }
+
       fechaDom  = new Date();
       estadoDom = 'pendiente';
     } else {
       domModo   = null;
       fechaDom  = null;
       estadoDom = null;
->>>>>>> 7d6516c (Cambios nuevos)
     }
 
     const back_urls = getBackUrls();
     console.log('🟢 Back URLs (create):', back_urls);
     if (!back_urls) return res.status(500).json({ error: 'missing_front_url' });
 
-    // Total que registra la orden (solo productos, el envío se maneja aparte
-    // para no romper nada por ahora)
+    // Total que registra la orden (solo productos)
     const total = norm.reduce(
       (a, b) => a + b.unit_price * b.quantity,
       0
@@ -990,7 +863,7 @@ app.post('/api/payments/create', async (req, res) => {
          RETURNING order_id`,
         [
           total,
-          domModo,       // 'local' | 'coordinadora' | null
+          domModo,
           domNombre,
           domDireccion,
           domBarrio,
@@ -1020,7 +893,7 @@ app.post('/api/payments/create', async (req, res) => {
       client.release();
     }
 
-    // ===== Pref de Mercado Pago =====
+    // ===== Preferencia de Mercado Pago =====
     const body = {
       items: norm.map((i) => ({
         id: i.product_id !== null ? String(i.product_id) : 'EXTRA',
@@ -1093,10 +966,7 @@ app.post('/api/payments/webhook', async (req, res) => {
       if (pay.status === 'approved') {
         const items = pay.additional_info?.items || [];
 
-<<<<<<< HEAD
         // Descontar stock de productos reales
-=======
->>>>>>> 7d6516c (Cambios nuevos)
         for (const item of items) {
           const productId = Number(item.id);
           const qty = Number(item.quantity) || 0;
@@ -1142,13 +1012,16 @@ app.post('/api/payments/webhook', async (req, res) => {
 
   res.sendStatus(200);
 });
-// ================== REPORTES FINANCIEROS (PYTHON) ==================
+
+/* =========================================
+   REPORTES FINANCIEROS (MICROSERVICIO PYTHON)
+========================================= */
+
 app.get('/api/reports/finanzas', requireAdmin, async (req, res) => {
   try {
     // format viene del front: 'pdf' o 'xlsx'
     const format = req.query.format === 'pdf' ? 'pdf' : 'xlsx';
 
-<<<<<<< HEAD
     // URL base del microservicio Python (configurar en .env en Render)
     const pythonBase = process.env.PY_ANALYTICS_URL || 'http://127.0.0.1:5001';
 
@@ -1160,24 +1033,27 @@ app.get('/api/reports/finanzas', requireAdmin, async (req, res) => {
     const proxRes = await fetch(url, {
       method: 'GET',
       headers: {
-        'X-REPORT-SECRET': reportSecret
-      }
+        'X-REPORT-SECRET': reportSecret,
+      },
     });
 
     if (!proxRes.ok) {
-      const txt = await proxRes.text().catch(()=>null);
+      const txt = await proxRes.text().catch(() => null);
       console.error('Python report failed', proxRes.status, txt);
-      return res.status(502).json({ error: 'report_downstream_failed', status: proxRes.status });
+      return res
+        .status(502)
+        .json({ error: 'report_downstream_failed', status: proxRes.status });
     }
 
-    // Forward headers and stream body
-    const contentType = proxRes.headers.get('content-type') || 'application/octet-stream';
-    const contentDisp = proxRes.headers.get('content-disposition') || `attachment; filename="reporte.${format}"`;
+    const contentType =
+      proxRes.headers.get('content-type') || 'application/octet-stream';
+    const contentDisp =
+      proxRes.headers.get('content-disposition') ||
+      `attachment; filename="reporte.${format}"`;
 
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', contentDisp);
 
-    // pipe stream
     proxRes.body.pipe(res);
   } catch (err) {
     console.error('/api/reports/finanzas proxy error:', err);
@@ -1185,14 +1061,11 @@ app.get('/api/reports/finanzas', requireAdmin, async (req, res) => {
   }
 });
 
+/* =========================================
+   ORDERS (VENTAS / DOMICILIOS)
+========================================= */
 
-
-// ================== ORDERS (panel ventas) ==================
 app.get('/api/orders', requireStaff, async (req, res) => {
-=======
-// ================== ORDERS (ventas / domicilios) ==================
-app.get('/api/orders', requireAuth, async (req, res) => {
->>>>>>> 7d6516c (Cambios nuevos)
   try {
     const { status, q, from, to } = req.query;
 
@@ -1253,14 +1126,12 @@ app.get('/api/orders', requireAuth, async (req, res) => {
   }
 });
 
-<<<<<<< HEAD
-// ================== STATS (panel estadísticas) ==================
-// Ahora SOLO ADMIN
-app.get('/api/stats/sales', requireAdmin, async (req, res) => {
-=======
-// ================== STATS (solo staff/admin) ==================
+/* =========================================
+   STATS (ESTADÍSTICAS)
+========================================= */
+
+// Solo staff (ADMIN / DEV_ADMIN / STAFF)
 app.get('/api/stats/sales', requireStaff, async (req, res) => {
->>>>>>> 7d6516c (Cambios nuevos)
   try {
     const range = req.query.range || 'month';
 
@@ -1360,7 +1231,10 @@ app.get('/api/stats/sales', requireStaff, async (req, res) => {
   }
 });
 
-// ===== Start =====
+/* =========================================
+   START SERVER
+========================================= */
+
 const port = process.env.PORT || 8080;
 app.listen(port, () =>
   console.log(`API running on http://localhost:${port}`)
