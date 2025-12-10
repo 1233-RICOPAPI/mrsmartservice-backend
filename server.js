@@ -32,7 +32,7 @@ const app = express();
  * CORS
  */
 const allowedOrigins = [
-  'https://sparkling-llama-c1c397.netlify.app',
+  'https://mr-smart-service.netlify.app',
   'http://localhost:5500',
   'http://127.0.0.1:5500',
 ];
