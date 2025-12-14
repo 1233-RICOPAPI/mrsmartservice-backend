@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import multer from 'multer';
-import { v2 as cloudinary } from 'cloudinary';
+import { uploadImageBuffer } from './gcs.js';
 import { MercadoPagoConfig, Preference } from 'mercadopago';
 import bcrypt from 'bcryptjs';
 import { pool, query } from './db.js';
@@ -16,12 +16,6 @@ import {
   requestPasswordReset,
   resetPassword,
 } from './auth.js';
-
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key:    process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
 
 const app = express();
 
@@ -346,22 +340,14 @@ app.post(
     try {
       if (!req.file) return res.status(400).json({ error: 'no_file' });
 
-      const result = await new Promise((resolve, reject) => {
-        cloudinary.uploader
-          .upload_stream(
-            {
-              folder: 'mrsmartservice',
-              resource_type: 'auto',
-            },
-            (err, uploaded) => {
-              if (err) reject(err);
-              else resolve(uploaded);
-            }
-          )
-          .end(req.file.buffer);
+      const result = await uploadImageBuffer({
+        buffer: req.file.buffer,
+        originalname: req.file.originalname,
+        mimetype: req.file.mimetype,
+        folder: process.env.GCS_UPLOAD_FOLDER || 'mrsmartservice',
       });
 
-      res.json({ url: result.secure_url });
+      res.json({ url: result.url, object: result.object });
     } catch (e) {
       console.error('upload error:', e);
       res.status(500).json({ error: 'upload_failed' });
