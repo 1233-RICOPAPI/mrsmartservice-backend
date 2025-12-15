@@ -1,7 +1,7 @@
+
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import path from 'path';
 import multer from 'multer';
 import { uploadImageBuffer } from './gcs.js';
 import { MercadoPagoConfig, Preference } from 'mercadopago';
@@ -19,54 +19,24 @@ import {
 
 const app = express();
 
-const allowedOrigins = [
-  process.env.FRONT_URL,              // tu front principal
-  'https://mrsmartservice-decad.web.app',
-  'https://mrsmartservice-decad.firebaseapp.com',
-  'http://localhost:5500',
-  'http://127.0.0.1:5500',
-].filter(Boolean);
-
-
-const corsOptions = {
-  origin(origin, callback) {
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    return callback(null, false);
-  },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-};
-
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
-app.use(express.json({ limit: '1mb' }));
-
-// Archivos estáticos legacy
-app.use('/uploads', express.static('uploads'));
-
-const storage = multer.memoryStorage();
-const upload = multer({ storage });
-
-// ===== Utils =====
+/* =========================
+   HELPERS
+========================= */
 const has = (v) => typeof v === 'string' && v.trim().length > 0;
 const trimRightSlash = (u) => (u || '').trim().replace(/\/+$/, '');
 
-// Base del front (Netlify o local)
 function resolveFrontBase() {
   const env = trimRightSlash(process.env.FRONT_URL);
   if (has(env)) return env;
 
-  // Fallback SOLO local
-  const fallback = 'http://127.0.0.1:5500/Ecomerce/web';
+  // fallback SOLO local (no rompe prod si FRONT_URL falta)
+  const fallback = 'https://mrsmartservice-decad.web.app'; // o tu front real
   console.warn('⚠️ FRONT_URL no definido, usando fallback:', fallback);
   return fallback;
 }
 
-// back_urls para auto_return
 function getBackUrls() {
   const base = resolveFrontBase();
-  if (!base) return null;
   return {
     success: `${base}/carrito.html`,
     failure: `${base}/carrito.html`,
@@ -74,7 +44,6 @@ function getBackUrls() {
   };
 }
 
-// ===== Helpers ciudad / Coordinadora =====
 function normalizeCity(ciudad) {
   return (ciudad || '')
     .toLowerCase()
@@ -85,22 +54,66 @@ function normalizeCity(ciudad) {
 
 function isLocalCity(ciudad) {
   const c = normalizeCity(ciudad);
-  // Local: Villavicencio / Acacías
-  return c === 'villavicencio' || c === 'acacias';
+  return c === 'villavicencio';
 }
 
-// ===== Mercado Pago =====
+/* =========================
+   CORS
+========================= */
+const allowedOrigins = [
+  process.env.FRONT_URL, // tu front principal (cuando lo definas)
+  'https://mrsmartservice-decad.web.app',
+  'https://mrsmartservice-decad.firebaseapp.com',
+  'http://localhost:5500',
+  'http://127.0.0.1:5500',
+].filter(Boolean);
+
+const corsOptions = {
+  origin(origin, callback) {
+    // Cloud Run + curl/postman no mandan Origin => permitir
+    if (!origin) return callback(null, true);
+
+    // Si definiste FRONT_URL, restringimos a la lista
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+
+    // Si NO hay FRONT_URL, mejor permitir (para no bloquearte mientras migras)
+    if (!has(process.env.FRONT_URL)) return callback(null, true);
+
+    return callback(null, false);
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
+
+app.use(express.json({ limit: '1mb' }));
+
+// Legacy estáticos
+app.use('/uploads', express.static('uploads'));
+
+/* =========================
+   MERCADO PAGO
+========================= */
 if (!has(process.env.MP_ACCESS_TOKEN)) {
-  console.error('❌ Falta MP_ACCESS_TOKEN en .env');
+  console.error('❌ Falta MP_ACCESS_TOKEN en variables de entorno');
 }
 const mp = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN });
 
-// ===== Seed admin =====
+/* =========================
+   SEED ADMIN
+========================= */
 seedAdminOnce().catch((err) => console.error('seedAdminOnce error:', err));
 
-/* =========================================
-   HEALTH & DEBUG
-========================================= */
+/* =========================
+   ROUTES BASICAS
+========================= */
+
+// IMPORTANTE: root para verificar que NO es placeholder
+app.get('/', (_req, res) => {
+  res.status(200).send('mrsmartservice API OK');
+});
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
@@ -115,27 +128,14 @@ app.get('/api/debug/env', (_req, res) => {
 app.get('/api/debug/mp', async (_req, res) => {
   try {
     const back_urls = getBackUrls();
-    console.log('🟢 FRONT_URL:', process.env.FRONT_URL);
-    console.log('🟢 Back URLs:', back_urls);
-
-    if (!back_urls) {
-      return res.status(400).json({ ok: false, error: 'missing_FRONT_URL' });
-    }
 
     const body = {
       items: [
-        {
-          title: 'Item Test',
-          unit_price: 12345,
-          quantity: 1,
-          currency_id: 'COP',
-        },
+        { title: 'Item Test', unit_price: 12345, quantity: 1, currency_id: 'COP' },
       ],
       binary_mode: true,
       back_urls,
     };
-
-    console.log('🟢 Body enviado a MP (debug):', body);
 
     const pref = new Preference(mp);
     const out = await pref.create({ body });
@@ -146,49 +146,27 @@ app.get('/api/debug/mp', async (_req, res) => {
       back_urls: body.back_urls,
     });
   } catch (e) {
-    try {
-      const status = e?.cause?.status;
-      const body = e?.cause?.response ? await e.cause.response.json() : null;
-      console.error(
-        'MP DEBUG FAILED :: status=',
-        status,
-        ':: body=',
-        body,
-        ':: message=',
-        e?.message
-      );
-      return res
-        .status(500)
-        .json({ ok: false, status, body, message: e?.message });
-    } catch (err2) {
-      console.error('MP DEBUG FAILED (sin body parse):', e, 'extra:', err2);
-      return res
-        .status(500)
-        .json({ ok: false, message: e?.message || 'mp_debug_failed' });
-    }
+    return res.status(500).json({ ok: false, message: e?.message || 'mp_debug_failed' });
   }
 });
 
-/* =========================================
+/* =========================
    AUTH
-========================================= */
-
+========================= */
 app.post('/api/login', login);
 app.post('/api/auth/request-reset', requestPasswordReset);
 app.post('/api/auth/reset-password', resetPassword);
 
-// Info del usuario logueado (cualquier rol)
 app.get('/api/me', requireAuth, async (req, res) => {
   try {
     const userId = req.user?.user_id ?? req.user?.sub ?? null;
     if (!userId) return res.status(401).json({ error: 'unauthorized' });
 
     const rows = await query(
-      `SELECT user_id, email, role, created_at
-         FROM users
-        WHERE user_id = $1`,
+      `SELECT user_id, email, role, created_at FROM users WHERE user_id = $1`,
       [userId]
     );
+
     if (!rows.length) return res.status(404).json({ error: 'user_not_found' });
 
     const { user_id, email, role, created_at } = rows[0];
@@ -199,165 +177,54 @@ app.get('/api/me', requireAuth, async (req, res) => {
   }
 });
 
-// Cambiar contraseña propia (solo staff: ADMIN / DEV_ADMIN / STAFF)
 app.post('/api/users/change-password', requireStaff, async (req, res) => {
   try {
     const userId = req.user?.user_id ?? req.user?.sub ?? null;
     const { oldPassword, newPassword } = req.body || {};
-    console.log('[change-password] userId=', userId);
 
     if (!userId) return res.status(401).json({ error: 'unauthorized' });
-    if (!oldPassword || !newPassword) {
-      return res.status(400).json({ error: 'missing_fields' });
-    }
-    if (newPassword.length < 8) {
-      return res.status(400).json({ error: 'weak_password' });
-    }
+    if (!oldPassword || !newPassword) return res.status(400).json({ error: 'missing_fields' });
+    if (newPassword.length < 8) return res.status(400).json({ error: 'weak_password' });
 
-    const rows = await query(
-      'SELECT user_id, password_hash FROM users WHERE user_id = $1',
-      [userId]
-    );
+    const rows = await query('SELECT user_id, password_hash FROM users WHERE user_id = $1', [userId]);
     if (!rows.length) return res.status(404).json({ error: 'user_not_found' });
 
-    const user = rows[0];
-    const ok = await bcrypt.compare(oldPassword, user.password_hash);
+    const ok = await bcrypt.compare(oldPassword, rows[0].password_hash);
     if (!ok) return res.status(400).json({ error: 'invalid_password' });
 
     const newHash = await bcrypt.hash(newPassword, 10);
-    await query('UPDATE users SET password_hash = $1 WHERE user_id = $2', [
-      newHash,
-      user.user_id,
-    ]);
+    await query('UPDATE users SET password_hash = $1 WHERE user_id = $2', [newHash, rows[0].user_id]);
 
-    return res.json({ success: true });
-  } catch (e) {
-    console.error('POST /api/users/change-password error:', e);
-    return res.status(500).json({ error: 'change_password_failed' });
-  }
-});
-
-// Crear empleados/invitados rol USER (solo ADMIN / DEV_ADMIN)
-app.post('/api/users', requireAdmin, async (req, res) => {
-  try {
-    const { email, password } = req.body || {};
-
-    const cleanEmail = String(email || '').trim().toLowerCase();
-    const cleanPass  = String(password || '').trim();
-
-    if (!cleanEmail || !cleanPass) {
-      return res.status(400).json({ error: 'missing_email_or_password' });
-    }
-
-    if (cleanPass.length < 8) {
-      return res.status(400).json({ error: 'weak_password' });
-    }
-
-    // límite: máximo 3 usuarios con rol USER
-    const countRows = await query(
-      `SELECT COUNT(*)::int AS c FROM users WHERE role = 'USER'`
-    );
-    const currentUsers = countRows[0]?.c ?? 0;
-    if (currentUsers >= 3) {
-      return res.status(400).json({ error: 'user_limit_reached' });
-    }
-
-    const exists = await query('SELECT 1 FROM users WHERE email = $1', [cleanEmail]);
-    if (exists.length) {
-      return res.status(400).json({ error: 'email_in_use' });
-    }
-
-    const hash = await bcrypt.hash(cleanPass, 10);
-
-    const rows = await query(
-      `INSERT INTO users (email, password_hash, role)
-       VALUES ($1, $2, 'USER')
-       RETURNING user_id, email, role, created_at`,
-      [cleanEmail, hash]
-    );
-
-    res.status(201).json(rows[0]);
-  } catch (e) {
-    console.error('POST /api/users error:', e);
-    res.status(500).json({ error: 'user_create_failed' });
-  }
-});
-
-// Lista de usuarios (panel admin/dev/staff)
-app.get('/api/users', requireStaff, async (_req, res) => {
-  try {
-    const rows = await query(
-      `SELECT user_id, email, role, created_at
-         FROM users
-         ORDER BY user_id ASC`
-    );
-    res.json(rows);
-  } catch (e) {
-    console.error('GET /api/users error:', e);
-    res.status(500).json({ error: 'users_list_failed' });
-  }
-});
-
-// Borrar usuario (solo ADMIN / DEV_ADMIN), pero protegiendo seed
-app.delete('/api/users/:id', requireAdmin, async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    if (!id) return res.status(400).json({ error: 'bad_id' });
-
-    const rows = await query(
-      'SELECT email, role FROM users WHERE user_id = $1',
-      [id]
-    );
-    if (!rows.length) {
-      return res.status(404).json({ error: 'user_not_found' });
-    }
-
-    const email = String(rows[0].email || '').toLowerCase();
-
-    // protegidos: admin y tu dev principal
-    const protectedEmails = [
-      'admin@tienda.com',
-      'aaronmotta5@gmail.com',
-    ];
-    if (protectedEmails.includes(email)) {
-      return res.status(400).json({ error: 'cannot_delete_seed' });
-    }
-
-    await query('DELETE FROM users WHERE user_id = $1', [id]);
     res.json({ success: true });
   } catch (e) {
-    console.error('DELETE /api/users/:id error:', e);
-    res.status(500).json({ error: 'user_delete_failed' });
+    console.error('POST /api/users/change-password error:', e);
+    res.status(500).json({ error: 'change_password_failed' });
   }
 });
 
-/* =========================================
-   UPLOAD (Cloudinary)
-========================================= */
+/* =========================
+   UPLOAD GCS
+========================= */
+const storage = multer.memoryStorage();
+const upload = multer({ storage });
 
-app.post(
-  '/api/upload',
-  requireStaff, // ADMIN / DEV_ADMIN / STAFF
-  upload.single('image'),
-  async (req, res) => {
-    try {
-      if (!req.file) return res.status(400).json({ error: 'no_file' });
+app.post('/api/upload', requireStaff, upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'no_file' });
 
-      const result = await uploadImageBuffer({
-        buffer: req.file.buffer,
-        originalname: req.file.originalname,
-        mimetype: req.file.mimetype,
-        folder: process.env.GCS_UPLOAD_FOLDER || 'mrsmartservice',
-      });
+    const result = await uploadImageBuffer({
+      buffer: req.file.buffer,
+      originalname: req.file.originalname,
+      mimetype: req.file.mimetype,
+      folder: process.env.GCS_UPLOAD_FOLDER || 'mrsmartservice',
+    });
 
-      res.json({ url: result.url, object: result.object });
-    } catch (e) {
-      console.error('upload error:', e);
-      res.status(500).json({ error: 'upload_failed' });
-    }
+    res.json({ url: result.url, object: result.object });
+  } catch (e) {
+    console.error('upload error:', e);
+    res.status(500).json({ error: 'upload_failed' });
   }
-);
-
+});
 /* =========================================
    ADS (PUBLICIDAD HOME)
 ========================================= */
@@ -1220,11 +1087,8 @@ app.get('/api/stats/sales', requireStaff, async (req, res) => {
   }
 });
 
-/* =========================================
-   START SERVER
-========================================= */
-
-const port = process.env.PORT || 8080;
-app.listen(port, () =>
-  console.log(`API running on http://localhost:${port}`)
-);
+/* =========================
+   START SERVER (Cloud Run)
+========================= */
+const port = Number(process.env.PORT || 8080);
+app.listen(port, () => console.log(`API running on port ${port}`));
