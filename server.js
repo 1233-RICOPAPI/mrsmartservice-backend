@@ -20,10 +20,13 @@ import {
 const app = express();
 
 const allowedOrigins = [
-  'https://mr-smart-service.netlify.app',
+  process.env.FRONT_URL,              // tu front principal
+  'https://mrsmartservice-decad.web.app',
+  'https://mrsmartservice-decad.firebaseapp.com',
   'http://localhost:5500',
   'http://127.0.0.1:5500',
-];
+].filter(Boolean);
+
 
 const corsOptions = {
   origin(origin, callback) {
