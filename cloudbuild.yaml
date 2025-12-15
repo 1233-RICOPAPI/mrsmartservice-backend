@@ -3,7 +3,11 @@ options:
 
 steps:
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', '$LOCATION-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/mrsmartservice:$SHORT_SHA', '.']
+    args:
+      - 'build'
+      - '-t'
+      - '${_LOCATION}-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/mrsmartservice:${SHORT_SHA}'
+      - '.'
 
 images:
-  - '$LOCATION-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/mrsmartservice:$SHORT_SHA'
+  - '${_LOCATION}-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/mrsmartservice:${SHORT_SHA}'
