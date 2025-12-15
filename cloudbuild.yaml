@@ -1,0 +1,9 @@
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', '$LOCATION-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/mrsmartservice:$SHORT_SHA', '.']
+
+images:
+  - '$LOCATION-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/mrsmartservice:$SHORT_SHA'
