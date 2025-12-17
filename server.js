@@ -597,25 +597,37 @@ app.put('/api/products/:id', requireAdmin, async (req, res) => {
   }
 });
 
-// Borrar producto
+// Borrar producto (FIX DEFINITIVO)
 app.delete('/api/products/:id', requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
-  if (!Number.isFinite(id)) return res.status(400).json({ error: 'ID inválido' });
+  if (!Number.isFinite(id)) {
+    return res.status(400).json({ error: 'invalid_id' });
+  }
 
   try {
-    // 1) Intento de borrado físico
-    await db.query('DELETE FROM products WHERE id=$1', [id]);
-    return res.json({ ok: true, deleted: true });
-  } catch (e) {
-    // Postgres FK violation => producto tiene ventas/relaciones
-    if (String(e.code) === '23503') {
-      await db.query('UPDATE products SET active=false WHERE id=$1', [id]);
-      return res.json({ ok: true, deleted: false, softDeleted: true, reason: 'linked_records' });
+    // Intento de borrado físico
+    const result = await query(
+      'DELETE FROM products WHERE product_id = $1 RETURNING product_id',
+      [id]
+    );
+
+    if (result.length) {
+      return res.json({ ok: true, deleted: true });
     }
-    console.error('DELETE /api/products error', e);
-    return res.status(500).json({ error: 'No se pudo eliminar el producto' });
+
+    // Si no se borró nada, intentamos soft delete
+    await query(
+      'UPDATE products SET active = false WHERE product_id = $1',
+      [id]
+    );
+
+    return res.json({ ok: true, deleted: false, softDeleted: true });
+  } catch (e) {
+    console.error('DELETE /api/products error:', e);
+    return res.status(500).json({ error: 'product_delete_failed' });
   }
 });
+
 
 // Listar reseñas de un producto
 app.get('/api/products/:id/reviews', async (req, res) => {
