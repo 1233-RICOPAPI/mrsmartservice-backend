@@ -203,26 +203,132 @@ app.post('/api/users/change-password', requireStaff, async (req, res) => {
 });
 
 /* =========================
+   USUARIOS DEL PANEL (ADMIN)
+   - GET   /api/users
+   - POST  /api/users
+   - DELETE /api/users/:id
+========================= */
+app.get('/api/users', requireAdmin, async (req, res) => {
+  try {
+    // Solo listamos usuarios del panel con rol USER (los "adicionales")
+    const rows = await query(
+      `SELECT user_id, email, role, created_at
+       FROM users
+       WHERE role = 'USER'
+       ORDER BY created_at DESC`
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error('GET /api/users error:', e);
+    res.status(500).json({ error: 'users_list_failed' });
+  }
+});
+
+app.post('/api/users', requireAdmin, async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+
+    if (!email || !password) return res.status(400).json({ error: 'missing_fields' });
+    const normalizedEmail = String(email).trim().toLowerCase();
+
+    // Límite: hasta 3 usuarios adicionales con rol USER (ajusta si lo necesitas)
+    const countRows = await query(`SELECT COUNT(*)::int AS c FROM users WHERE role = 'USER'`);
+    const currentCount = countRows?.[0]?.c ?? 0;
+    if (currentCount >= 3) return res.status(400).json({ error: 'user_limit_reached' });
+
+    const exists = await query(`SELECT 1 FROM users WHERE email = $1`, [normalizedEmail]);
+    if (exists.length) return res.status(400).json({ error: 'email_in_use' });
+
+    if (String(password).length < 8) return res.status(400).json({ error: 'weak_password' });
+
+    const password_hash = await bcrypt.hash(String(password), 10);
+
+    const rows = await query(
+      `INSERT INTO users (email, password_hash, role)
+       VALUES ($1, $2, 'USER')
+       RETURNING user_id, email, role, created_at`,
+      [normalizedEmail, password_hash]
+    );
+
+    res.status(201).json(rows[0]);
+  } catch (e) {
+    console.error('POST /api/users error:', e);
+    res.status(500).json({ error: 'user_create_failed' });
+  }
+});
+
+app.delete('/api/users/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid_id' });
+
+    // No permitir borrar el usuario actual
+    const meId = req.user?.user_id ?? req.user?.sub ?? null;
+    if (meId && Number(meId) === id) return res.status(400).json({ error: 'cannot_delete_self' });
+
+    const rows = await query(`SELECT user_id, email, role FROM users WHERE user_id = $1`, [id]);
+    if (!rows.length) return res.status(404).json({ error: 'user_not_found' });
+
+    // Bloqueo de cuentas seed (ajusta si cambiaste los correos seed)
+    const email = String(rows[0].email || '').toLowerCase();
+    const role = String(rows[0].role || '').toUpperCase();
+    if (email === 'admin@tienda.com' || email === 'dev@tienda.com' || role === 'ADMIN' || role === 'DEV_ADMIN') {
+      return res.status(403).json({ error: 'cannot_delete_seed' });
+    }
+
+    await query(`DELETE FROM users WHERE user_id = $1`, [id]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('DELETE /api/users/:id error:', e);
+    res.status(500).json({ error: 'user_delete_failed' });
+  }
+});
+
+/* =========================
    UPLOAD GCS
 ========================= */
 const storage = multer.memoryStorage();
-const upload = multer({ storage });
 
-app.post('/api/upload', requireStaff, upload.single('image'), async (req, res) => {
+/**
+ * IMPORTANTE (Cloud Run):
+ * - Límite de request ~32MB. No subas videos muy grandes.
+ * - Aceptamos "image" (actual) y también "file" por compatibilidad.
+ */
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: Number(process.env.UPLOAD_MAX_BYTES || 25 * 1024 * 1024), // 25MB por defecto
+  },
+});
+
+const uploadAny = upload.fields([
+  { name: 'image', maxCount: 1 },
+  { name: 'file', maxCount: 1 },
+]);
+
+app.post('/api/upload', requireStaff, uploadAny, async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: 'no_file' });
+    const file =
+      (req.files?.image && req.files.image[0]) ||
+      (req.files?.file && req.files.file[0]) ||
+      null;
+
+    if (!file) return res.status(400).json({ error: 'no_file' });
+
+    const baseFolder = process.env.GCS_UPLOAD_FOLDER || 'mrsmartservice';
+    const subFolder = String(file.mimetype || '').startsWith('video/') ? 'videos' : 'images';
 
     const result = await uploadImageBuffer({
-      buffer: req.file.buffer,
-      originalname: req.file.originalname,
-      mimetype: req.file.mimetype,
-      folder: process.env.GCS_UPLOAD_FOLDER || 'mrsmartservice',
+      buffer: file.buffer,
+      originalname: file.originalname,
+      mimetype: file.mimetype,
+      folder: `${baseFolder}/${subFolder}`,
     });
 
     res.json({ url: result.url, object: result.object });
   } catch (e) {
-    console.error('upload error:', e);
-    res.status(500).json({ error: 'upload_failed' });
+    console.error('upload error:', e?.stack || e);
+    res.status(500).json({ error: 'upload_failed', message: e?.message || String(e) });
   }
 });
 /* =========================================
