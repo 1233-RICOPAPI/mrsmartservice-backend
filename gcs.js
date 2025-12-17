@@ -30,8 +30,8 @@ export async function uploadImageBuffer({ buffer, originalname, mimetype, folder
 
   // Hacemos el objeto público para poder servirlo directo (igual que Cloudinary secure_url)
   // Alternativa: generar signed URLs, pero para ecommerce es más simple usar lectura pública.
-  await file.makePublic();
-
+  // Bucket debe ser público por IAM (roles/storage.objectViewer a allUsers)
+  // Con 'Uniform bucket-level access' NO usamos ACLs, así que NO hacemos makePublic().
   return {
     bucket: bucketName,
     object: objectName,
