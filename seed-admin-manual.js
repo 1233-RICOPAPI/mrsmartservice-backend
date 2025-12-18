@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const { pool } = require('./db.js');
 
 async function main() {
-  const email = 'admin@tienda.com';
+  const email = 'yesfri@hotmail.es';
   const pass  = 'Admin12345!';
   const hash  = bcrypt.hashSync(pass, 10);
 
@@ -13,9 +13,9 @@ async function main() {
 
     await client.query(`
       INSERT INTO users(email, password_hash, role)
-      VALUES ($1, $2, 'admin')
+      VALUES ($1, $2, 'ADMIN')
       ON CONFLICT(email)
-      DO UPDATE SET password_hash = EXCLUDED.password_hash, role = 'admin'
+      DO UPDATE SET password_hash = EXCLUDED.password_hash, role = 'ADMIN'
     `, [email, hash]);
 
     console.log('✅ Admin creado/actualizado correctamente');
