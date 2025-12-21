@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS products (
   product_id       SERIAL PRIMARY KEY,
   name             TEXT NOT NULL,
   description      TEXT,
+  tech_sheet       TEXT,
   price            NUMERIC(12,2) NOT NULL DEFAULT 0,
   stock            INTEGER       NOT NULL DEFAULT 0,
   discount_percent INTEGER       NOT NULL DEFAULT 0,
@@ -120,8 +121,15 @@ ALTER TABLE orders
   ADD COLUMN IF NOT EXISTS estado_domicilio    TEXT;
 `;
 
+const ALTER_PRODUCTS_TECH_SHEET = `
+-- === EXTENDER PRODUCTS CON tech_sheet (compat con server.js) ===
+ALTER TABLE products
+  ADD COLUMN IF NOT EXISTS tech_sheet TEXT;
+`;
+
 try {
   await pool.query(SQL);
+  await pool.query(ALTER_PRODUCTS_TECH_SHEET);
   await pool.query(ALTER_ORDERS_DOMICILIO);
   console.log('✅ Esquema creado/actualizado OK');
 } catch (e) {
