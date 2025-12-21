@@ -886,6 +886,7 @@ app.post('/api/payments/create', async (req, res) => {
       })),
       binary_mode: true,
       back_urls,
+      external_reference: String(orderId),
       metadata: {
         ts: Date.now(),
         order_id: orderId,
@@ -904,7 +905,7 @@ app.post('/api/payments/create', async (req, res) => {
       return res.status(502).json({ error: 'mp_no_init_point' });
     }
 
-    return res.json({ init_point: out.init_point });
+    return res.json({ init_point: out.init_point, order_id: orderId });
   } catch (e) {
     try {
       const status = e?.cause?.status;
