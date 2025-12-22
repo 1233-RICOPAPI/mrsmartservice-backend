@@ -38,10 +38,11 @@ function resolveFrontBase() {
 
 function getBackUrls() {
   const base = resolveFrontBase();
+  // Mercado Pago redirige a esta página después del pago
   return {
-    success: `${base}/carrito.html`,
-    failure: `${base}/carrito.html`,
-    pending: `${base}/carrito.html`,
+    success: `${base}/postpago.html`,
+    failure: `${base}/postpago.html`,
+    pending: `${base}/postpago.html`,
   };
 }
 
