@@ -38,10 +38,13 @@ function resolveFrontBase() {
 
 function getBackUrls() {
   const base = resolveFrontBase();
+  // ✅ MercadoPago vuelve a estas URLs después del pago
+  // success -> postpago.html (ahí confirmamos y mostramos factura)
+  // failure/pending -> carrito.html (para que el cliente intente de nuevo)
   return {
-    success: `${base}/carrito.html`,
-    failure: `${base}/carrito.html`,
+    success: `${base}/postpago.html`,
     pending: `${base}/carrito.html`,
+    failure: `${base}/carrito.html`,
   };
 }
 
@@ -101,7 +104,8 @@ if (!has(process.env.MP_ACCESS_TOKEN)) {
   console.error('❌ Falta MP_ACCESS_TOKEN en variables de entorno');
 }
 const mp = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN });
-const mpPayment = new Payment(mp);
+const preferenceClient = new Preference(mp);
+const paymentClient = new Payment(mp);
 
 /* =========================
    SEED ADMIN
@@ -1029,7 +1033,7 @@ app.post('/api/payments/webhook', async (req, res) => {
     // Algunos pings llegan sin id: no es error.
     if (!paymentId) return res.status(200).json({ ok: true, ignored: true });
 
-    const pay = await mp.payment.get(Number(paymentId));
+    const pay = await paymentClient.get({ id: Number(paymentId) });
     const p = pay?.response;
     if (!p) return res.status(200).json({ ok: true, ignored: true });
 
@@ -1054,38 +1058,13 @@ app.post('/api/payments/webhook', async (req, res) => {
 });
 
 // Confirmación post-pago: el cliente vuelve desde MP y validamos el payment_id contra MP
-/* ========= CONFIRM POST-PAGO =========
-   MercadoPago redirige al usuario al FRONT.
-   El FRONT llama a este endpoint para:
-   1) Consultar el pago en MP (por payment_id)
-   2) Obtener order_id desde external_reference/metadata
-   3) Marcar la orden como approved + guardar payment_id/email
-   4) Devolver invoice_url para abrir/descargar factura
-*/
 app.post('/api/payments/confirm', async (req, res) => {
   try {
-    const paymentId = Number(
-      req.body?.payment_id ||
-      req.body?.collection_id ||
-      req.query?.payment_id ||
-      req.query?.collection_id
-    );
-
+    const paymentId = Number(req.body?.payment_id || req.body?.collection_id || req.query?.payment_id || req.query?.collection_id);
     if (!paymentId) return res.status(400).json({ error: 'missing_payment_id' });
 
-    // ✅ SDK mercadopago (Payment) + fallback REST
-    let p;
-    try {
-      const pay = await mpPayment.get({ id: paymentId });
-      p = pay?.response || pay;
-    } catch (e) {
-      const r = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
-        headers: { Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}` },
-      });
-      if (!r.ok) throw new Error(`mp_api_${r.status}`);
-      p = await r.json();
-    }
-
+    const pay = await paymentClient.get({ id: Number(paymentId) });
+    const p = pay?.response;
     if (!p) return res.status(400).json({ error: 'payment_not_found' });
 
     const orderId = Number(p.external_reference || p.metadata?.order_id);
@@ -1099,24 +1078,15 @@ app.post('/api/payments/confirm', async (req, res) => {
       items: p.additional_info?.items || [],
     });
 
-    // ✅ SIEMPRE generar invoice_url
+    // Armar link de factura imprimible (público con token)
     const token = createInvoiceToken(orderId);
-    const front = resolveFrontBase();
-    const invoice_url = `${front.replace(/\/$/, '')}/factura.html?order_id=${orderId}&token=${token}`;
+    const front = process.env.FRONT_URL || '';
+    const invoice_url = front ? `${front.replace(/\/$/, '')}/factura.html?order_id=${orderId}&token=${token}` : null;
 
-    return res.json({
-      ok: true,
-      order_id: orderId,
-      payment_id: paymentId,
-      status: result.status,
-      invoice_url,
-    });
+    return res.json({ ok: true, order_id: orderId, payment_id: paymentId, status: result.status, invoice_url });
   } catch (err) {
     console.error('confirm error', err);
-    return res.status(500).json({
-      error: 'confirm_failed',
-      message: err?.message || String(err),
-    });
+    return res.status(500).json({ error: 'confirm_failed' });
   }
 });
 
