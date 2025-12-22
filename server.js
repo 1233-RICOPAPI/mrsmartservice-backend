@@ -1,3 +1,4 @@
+
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -29,8 +30,8 @@ function resolveFrontBase() {
   const env = trimRightSlash(process.env.FRONT_URL);
   if (has(env)) return env;
 
-  // fallback SOLO por seguridad (no rompe prod si FRONT_URL falta)
-  const fallback = 'https://mrsmartservice-decad.web.app';
+  // fallback SOLO local (no rompe prod si FRONT_URL falta)
+  const fallback = 'https://mrsmartservice-decad.web.app'; // o tu front real
   console.warn('⚠️ FRONT_URL no definido, usando fallback:', fallback);
   return fallback;
 }
@@ -61,7 +62,7 @@ function isLocalCity(ciudad) {
    CORS
 ========================= */
 const allowedOrigins = [
-  process.env.FRONT_URL,
+  process.env.FRONT_URL, // tu front principal (cuando lo definas)
   'https://mrsmartservice-decad.web.app',
   'https://mrsmartservice-decad.firebaseapp.com',
   'http://localhost:5500',
@@ -70,9 +71,15 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin(origin, callback) {
+    // Cloud Run + curl/postman no mandan Origin => permitir
     if (!origin) return callback(null, true);
+
+    // Si definiste FRONT_URL, restringimos a la lista
     if (allowedOrigins.includes(origin)) return callback(null, true);
+
+    // Si NO hay FRONT_URL, mejor permitir (para no bloquearte mientras migras)
     if (!has(process.env.FRONT_URL)) return callback(null, true);
+
     return callback(null, false);
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -84,7 +91,7 @@ app.options('*', cors(corsOptions));
 
 app.use(express.json({ limit: '1mb' }));
 
-// Legacy estáticos (ojo: en Cloud Run el FS es efímero)
+// Legacy estáticos
 app.use('/uploads', express.static('uploads'));
 
 /* =========================
@@ -103,7 +110,12 @@ seedAdminOnce().catch((err) => console.error('seedAdminOnce error:', err));
 /* =========================
    ROUTES BASICAS
 ========================= */
-app.get('/', (_req, res) => res.status(200).send('mrsmartservice API OK'));
+
+// IMPORTANTE: root para verificar que NO es placeholder
+app.get('/', (_req, res) => {
+  res.status(200).send('mrsmartservice API OK');
+});
+
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
 app.get('/api/debug/env', (_req, res) => {
@@ -111,8 +123,6 @@ app.get('/api/debug/env', (_req, res) => {
     has_access_token: has(process.env.MP_ACCESS_TOKEN),
     token_prefix: (process.env.MP_ACCESS_TOKEN || '').slice(0, 6),
     front_url: process.env.FRONT_URL || null,
-    public_api_url: process.env.PUBLIC_API_URL || null,
-    has_jwt_secret: has(process.env.JWT_SECRET),
   });
 });
 
@@ -121,7 +131,9 @@ app.get('/api/debug/mp', async (_req, res) => {
     const back_urls = getBackUrls();
 
     const body = {
-      items: [{ title: 'Item Test', unit_price: 12345, quantity: 1, currency_id: 'COP' }],
+      items: [
+        { title: 'Item Test', unit_price: 12345, quantity: 1, currency_id: 'COP' },
+      ],
       binary_mode: true,
       back_urls,
     };
@@ -193,9 +205,13 @@ app.post('/api/users/change-password', requireStaff, async (req, res) => {
 
 /* =========================
    USUARIOS DEL PANEL (ADMIN)
+   - GET   /api/users
+   - POST  /api/users
+   - DELETE /api/users/:id
 ========================= */
-app.get('/api/users', requireAdmin, async (_req, res) => {
+app.get('/api/users', requireAdmin, async (req, res) => {
   try {
+    // Solo listamos usuarios del panel con rol USER (los "adicionales")
     const rows = await query(
       `SELECT user_id, email, role, created_at
        FROM users
@@ -212,10 +228,11 @@ app.get('/api/users', requireAdmin, async (_req, res) => {
 app.post('/api/users', requireAdmin, async (req, res) => {
   try {
     const { email, password } = req.body || {};
-    if (!email || !password) return res.status(400).json({ error: 'missing_fields' });
 
+    if (!email || !password) return res.status(400).json({ error: 'missing_fields' });
     const normalizedEmail = String(email).trim().toLowerCase();
 
+    // Límite: hasta 3 usuarios adicionales con rol USER (ajusta si lo necesitas)
     const countRows = await query(`SELECT COUNT(*)::int AS c FROM users WHERE role = 'USER'`);
     const currentCount = countRows?.[0]?.c ?? 0;
     if (currentCount >= 3) return res.status(400).json({ error: 'user_limit_reached' });
@@ -246,12 +263,14 @@ app.delete('/api/users/:id', requireAdmin, async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid_id' });
 
+    // No permitir borrar el usuario actual
     const meId = req.user?.user_id ?? req.user?.sub ?? null;
     if (meId && Number(meId) === id) return res.status(400).json({ error: 'cannot_delete_self' });
 
     const rows = await query(`SELECT user_id, email, role FROM users WHERE user_id = $1`, [id]);
     if (!rows.length) return res.status(404).json({ error: 'user_not_found' });
 
+    // Bloqueo de cuentas seed (ajusta si cambiaste los correos seed)
     const email = String(rows[0].email || '').toLowerCase();
     const role = String(rows[0].role || '').toUpperCase();
     if (email === 'admin@tienda.com' || email === 'dev@tienda.com' || role === 'ADMIN' || role === 'DEV_ADMIN') {
@@ -271,10 +290,15 @@ app.delete('/api/users/:id', requireAdmin, async (req, res) => {
 ========================= */
 const storage = multer.memoryStorage();
 
+/**
+ * IMPORTANTE (Cloud Run):
+ * - Límite de request ~32MB. No subas videos muy grandes.
+ * - Aceptamos "image" (actual) y también "file" por compatibilidad.
+ */
 const upload = multer({
   storage,
   limits: {
-    fileSize: Number(process.env.UPLOAD_MAX_BYTES || 25 * 1024 * 1024),
+    fileSize: Number(process.env.UPLOAD_MAX_BYTES || 25 * 1024 * 1024), // 25MB por defecto
   },
 });
 
@@ -308,10 +332,10 @@ app.post('/api/upload', requireStaff, uploadAny, async (req, res) => {
     res.status(500).json({ error: 'upload_failed', message: e?.message || String(e) });
   }
 });
-
 /* =========================================
    ADS (PUBLICIDAD HOME)
 ========================================= */
+
 app.get('/api/ads', async (_req, res) => {
   try {
     const rows = await query(
@@ -327,6 +351,7 @@ app.get('/api/ads', async (_req, res) => {
   }
 });
 
+// Listado completo de anuncios para el panel (activos e inactivos)
 app.get('/api/ads/all', requireStaff, async (_req, res) => {
   try {
     const rows = await query(
@@ -385,7 +410,9 @@ app.put('/api/ads/:id', requireAdmin, async (req, res) => {
       }
     }
 
-    if (!sets.length) return res.status(400).json({ error: 'no_fields' });
+    if (!sets.length) {
+      return res.status(400).json({ error: 'no_fields' });
+    }
 
     sets.push(`updated_at = now()`);
     args.push(id);
@@ -398,7 +425,9 @@ app.put('/api/ads/:id', requireAdmin, async (req, res) => {
       args
     );
 
-    if (!rows.length) return res.status(404).json({ error: 'ad_not_found' });
+    if (!rows.length) {
+      return res.status(404).json({ error: 'ad_not_found' });
+    }
 
     res.json(rows[0]);
   } catch (e) {
@@ -423,6 +452,8 @@ app.delete('/api/ads/:id', requireAdmin, async (req, res) => {
 /* =========================================
    PRODUCTS CRUD + REVIEWS
 ========================================= */
+
+// Productos con rating promedio y descuento validado por fechas
 app.get('/api/products', async (_req, res) => {
   try {
     const rows = await query(
@@ -452,11 +483,18 @@ app.get('/api/products', async (_req, res) => {
 
       if (product.discount_start && product.discount_end) {
         const start = new Date(product.discount_start);
-        const end = new Date(product.discount_end);
-        if (now < start || now > end) discount = 0;
+        const end   = new Date(product.discount_end);
+
+        // fuera de rango → sin descuento
+        if (now < start || now > end) {
+          discount = 0;
+        }
       }
 
-      return { ...product, discount_percent: discount };
+      return {
+        ...product,
+        discount_percent: discount,
+      };
     });
 
     res.json(data);
@@ -466,6 +504,7 @@ app.get('/api/products', async (_req, res) => {
   }
 });
 
+// Crear producto
 app.post('/api/products', requireAdmin, async (req, res) => {
   try {
     const {
@@ -509,6 +548,7 @@ app.post('/api/products', requireAdmin, async (req, res) => {
   }
 });
 
+// Actualizar producto
 app.put('/api/products/:id', requireAdmin, async (req, res) => {
   try {
     const id = +req.params.id;
@@ -537,7 +577,9 @@ app.put('/api/products/:id', requireAdmin, async (req, res) => {
       }
     }
 
-    if (!sets.length) return res.status(400).json({ error: 'no_fields' });
+    if (!sets.length) {
+      return res.status(400).json({ error: 'no_fields' });
+    }
 
     args.push(id);
 
@@ -556,19 +598,30 @@ app.put('/api/products/:id', requireAdmin, async (req, res) => {
   }
 });
 
+// Borrar producto (FIX DEFINITIVO)
 app.delete('/api/products/:id', requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
-  if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid_id' });
+  if (!Number.isFinite(id)) {
+    return res.status(400).json({ error: 'invalid_id' });
+  }
 
   try {
+    // Intento de borrado físico
     const result = await query(
       'DELETE FROM products WHERE product_id = $1 RETURNING product_id',
       [id]
     );
 
-    if (result.length) return res.json({ ok: true, deleted: true });
+    if (result.length) {
+      return res.json({ ok: true, deleted: true });
+    }
 
-    await query('UPDATE products SET active = false WHERE product_id = $1', [id]);
+    // Si no se borró nada, intentamos soft delete
+    await query(
+      'UPDATE products SET active = false WHERE product_id = $1',
+      [id]
+    );
+
     return res.json({ ok: true, deleted: false, softDeleted: true });
   } catch (e) {
     console.error('DELETE /api/products error:', e);
@@ -576,6 +629,8 @@ app.delete('/api/products/:id', requireAdmin, async (req, res) => {
   }
 });
 
+
+// Listar reseñas de un producto
 app.get('/api/products/:id/reviews', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -596,6 +651,7 @@ app.get('/api/products/:id/reviews', async (req, res) => {
   }
 });
 
+// Crear reseña
 app.post('/api/products/:id/reviews', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -604,7 +660,9 @@ app.post('/api/products/:id/reviews', async (req, res) => {
     if (!id) return res.status(400).json({ error: 'bad_id' });
 
     const authorName = (name || author || '').trim();
-    if (!authorName || !rating) return res.status(400).json({ error: 'missing_fields' });
+    if (!authorName || !rating) {
+      return res.status(400).json({ error: 'missing_fields' });
+    }
 
     const r = Math.max(1, Math.min(5, Number(rating)));
 
@@ -629,6 +687,7 @@ app.post('/api/products/:id/reviews', async (req, res) => {
 /* =========================================
    PAYMENTS / MERCADO PAGO
 ========================================= */
+
 app.post('/api/payments/create', async (req, res) => {
   try {
     if (!has(process.env.MP_ACCESS_TOKEN)) {
@@ -638,6 +697,7 @@ app.post('/api/payments/create', async (req, res) => {
     const { items = [], shipping = null } = req.body;
     if (!items.length) return res.status(400).json({ error: 'no_items' });
 
+    // Normalizar items
     const norm = items.map((i) => {
       const hasPid = i.product_id !== undefined && i.product_id !== null;
       return {
@@ -649,17 +709,24 @@ app.post('/api/payments/create', async (req, res) => {
       };
     });
 
-    if (norm.some((i) => i.product_id !== null && !Number.isFinite(i.product_id))) {
+    if (
+      norm.some(
+        (i) => i.product_id !== null && !Number.isFinite(i.product_id)
+      )
+    ) {
       return res.status(400).json({ error: 'bad_product_id' });
     }
-    if (norm.some((i) => !Number.isFinite(i.unit_price) || i.unit_price <= 0)) {
+    if (
+      norm.some((i) => !Number.isFinite(i.unit_price) || i.unit_price <= 0)
+    ) {
       return res.status(400).json({ error: 'bad_price' });
     }
 
     // Validar stock y aplicar descuentos desde la BD
     const now = new Date();
+
     for (const item of norm) {
-      if (item.product_id === null) continue;
+      if (item.product_id === null) continue; // ej: envío
 
       const rows = await query(
         `SELECT name, price, stock, discount_percent, discount_start, discount_end
@@ -669,13 +736,17 @@ app.post('/api/payments/create', async (req, res) => {
       );
 
       if (!rows.length) {
-        return res.status(400).json({ error: 'product_not_found', product_id: item.product_id });
+        return res
+          .status(400)
+          .json({ error: 'product_not_found', product_id: item.product_id });
       }
 
       const prod = rows[0];
       const stock = Number(prod.stock) || 0;
       if (stock < item.quantity) {
-        return res.status(400).json({ error: 'no_stock', product_id: item.product_id });
+        return res
+          .status(400)
+          .json({ error: 'no_stock', product_id: item.product_id });
       }
 
       let finalPrice = Number(prod.price) || 0;
@@ -684,18 +755,23 @@ app.post('/api/payments/create', async (req, res) => {
       if (prod.discount_start && prod.discount_end) {
         const start = new Date(prod.discount_start);
         const end = new Date(prod.discount_end);
-        if (now < start || now > end) discount = 0;
+        if (now < start || now > end) {
+          discount = 0;
+        }
       }
 
-      if (discount > 0) finalPrice = finalPrice * (1 - discount / 100);
-      finalPrice = Math.round(finalPrice);
+      if (discount > 0) {
+        finalPrice = finalPrice * (1 - discount / 100);
+      }
+
+      finalPrice = Math.round(finalPrice); // COP entero
 
       item.unit_price = finalPrice;
       item.title = prod.name || item.title;
     }
 
-    // ===== Datos de envío =====
-    const baseMode     = shipping?.mode || null; // 'domicilio' o null
+    // ===== Datos de domicilio / coordinadora =====
+    const baseMode     = shipping?.mode || null;   // 'domicilio' o null
     const domNombre    = shipping?.nombre || null;
     const domDireccion = shipping?.direccion || null;
     const domBarrio    = shipping?.barrio || null;
@@ -703,9 +779,15 @@ app.post('/api/payments/create', async (req, res) => {
     const domTelefono  = shipping?.telefono || null;
     const domNota      = shipping?.nota || null;
 
+    // costo y modo de carrier que vienen del front (opcional)
     const shippingCost = Number(shipping?.shipping_cost || 0) || 0;
-    const rawCarrier   = (shipping?.carrier_mode || shipping?.carrier || '').toLowerCase() || null;
+    const rawCarrier   = (shipping?.carrier_mode || shipping?.carrier || '')
+      .toLowerCase() || null;
 
+    // modo final en DB:
+    //  - null           => retiro en punto
+    //  - 'local'        => domicilio local (Vcio / Acacías)
+    //  - 'coordinadora' => envío por Coordinadora (otras ciudades)
     let domModo   = null;
     let fechaDom  = null;
     let estadoDom = null;
@@ -717,6 +799,9 @@ app.post('/api/payments/create', async (req, res) => {
         const esLocal = isLocalCity(domCiudad || '');
         domModo = esLocal ? 'local' : 'coordinadora';
       }
+
+      // Importante: el domicilio NO debe quedar pendiente hasta que el pago se apruebe.
+      // Guardamos la información de envío, pero dejamos estado/fecha en NULL.
       fechaDom  = null;
       estadoDom = null;
     } else {
@@ -727,12 +812,23 @@ app.post('/api/payments/create', async (req, res) => {
 
     const back_urls = getBackUrls();
     console.log('🟢 Back URLs (create):', back_urls);
+    if (!back_urls) return res.status(500).json({ error: 'missing_front_url' });
 
-    const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
-    const host = String(req.headers['x-forwarded-host'] || req.get('host') || '').split(',')[0].trim();
+    // Base pública (Cloud Run) para construir notification_url del webhook
+    // Preferimos PUBLIC_API_URL, y si no existe la inferimos desde headers.
+    const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https')
+      .split(',')[0]
+      .trim();
+    const host = String(req.headers['x-forwarded-host'] || req.get('host') || '')
+      .split(',')[0]
+      .trim();
     const publicBase = (process.env.PUBLIC_API_URL || (host ? `${proto}://${host}` : '')).replace(/\/$/, '');
 
-    const total = norm.reduce((a, b) => a + b.unit_price * b.quantity, 0);
+    // Total que registra la orden (solo productos)
+    const total = norm.reduce(
+      (a, b) => a + b.unit_price * b.quantity,
+      0
+    );
 
     // ===== Guardar orden + items =====
     const client = await pool.connect();
@@ -745,7 +841,6 @@ app.post('/api/payments/create', async (req, res) => {
            status,
            total_amount,
            domicilio_modo,
-           domicilio_costo,
            domicilio_nombre,
            domicilio_direccion,
            domicilio_barrio,
@@ -758,15 +853,12 @@ app.post('/api/payments/create', async (req, res) => {
          VALUES(
            'initiated',
            $1,
-           $2,
-           $3,
-           $4,$5,$6,$7,$8,$9,$10,$11
+           $2,$3,$4,$5,$6,$7,$8,$9,$10
          )
          RETURNING order_id`,
         [
           total,
           domModo,
-          shippingCost,
           domNombre,
           domDireccion,
           domBarrio,
@@ -796,10 +888,10 @@ app.post('/api/payments/create', async (req, res) => {
       client.release();
     }
 
-    // ===== Preferencia Mercado Pago =====
+    // ===== Preferencia de Mercado Pago =====
     const body = {
       items: norm.map((i) => ({
-        id: i.product_id !== null ? String(i.product_id) : 'SHIPPING',
+        id: i.product_id !== null ? String(i.product_id) : 'EXTRA',
         title: i.title,
         unit_price: i.unit_price,
         quantity: i.quantity,
@@ -832,7 +924,14 @@ app.post('/api/payments/create', async (req, res) => {
     try {
       const status = e?.cause?.status;
       const body = e?.cause?.response ? await e.cause.response.json() : null;
-      console.error('PAYMENTS /create FAILED :: status=', status, ':: body=', body, ':: message=', e?.message);
+      console.error(
+        'PAYMENTS /create FAILED :: status=',
+        status,
+        ':: body=',
+        body,
+        ':: message=',
+        e?.message
+      );
     } catch {
       console.error('PAYMENTS /create FAILED (sin body parse):', e);
     }
@@ -840,81 +939,181 @@ app.post('/api/payments/create', async (req, res) => {
   }
 });
 
-async function processPaymentAndMaybeApprove({ orderId, paymentId, paymentStatus, payerEmail, items }) {
-  const status = String(paymentStatus || '').toLowerCase();
 
+async function processPaymentAndMaybeApprove({ orderId, paymentId, paymentStatus, payerEmail, items }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    const { rows } = await client.query(
-      'SELECT order_id, status, payment_id, domicilio_modo, estado_domicilio FROM orders WHERE order_id = $1 FOR UPDATE',
-      [orderId]
-    );
-    if (!rows.length) {
-      await client.query('ROLLBACK');
-      return { updated: false, reason: 'order_not_found' };
-    }
-
-    const order = rows[0];
-    const prevStatus = order.status;
-    const prevPaymentId = order.payment_id;
-
-    // idempotente
-    if (prevStatus === 'approved' && prevPaymentId) {
-      await client.query('COMMIT');
-      return { updated: false, status: prevStatus };
-    }
-
-    let newStatus = prevStatus;
-    if (status === 'approved') newStatus = 'approved';
-    else if (status === 'rejected') newStatus = 'rejected';
-    else if (status === 'cancelled') newStatus = 'cancelled';
-    else if (status) newStatus = status;
-
-    await client.query(
-      `UPDATE orders
-         SET status = $1,
-             payment_id = $2,
-             payer_email = COALESCE($3, payer_email),
-             updated_at = NOW()
-       WHERE order_id = $4`,
-      [newStatus, paymentId || prevPaymentId, payerEmail, orderId]
-    );
-
-    // Activar domicilio SOLO si aprobó
-    if (newStatus === 'approved' && order.domicilio_modo && !order.estado_domicilio) {
-      await client.query(
-        `UPDATE orders
-           SET estado_domicilio = 'pendiente',
-               fecha_domicilio = NOW()
-         WHERE order_id = $1`,
+    // 1) Lock the order row. Some DBs may not have payment_id yet -> fallback select.
+    let orderRow;
+    try {
+      orderRow = await client.query(
+        `SELECT order_id, status, payment_id FROM orders WHERE order_id = $1 FOR UPDATE`,
         [orderId]
       );
+    } catch (e) {
+      if (e?.code === '42703') {
+        orderRow = await client.query(
+          `SELECT order_id, status FROM orders WHERE order_id = $1 FOR UPDATE`,
+          [orderId]
+        );
+      } else {
+        throw e;
+      }
     }
 
-    // Descontar stock solo al aprobar por primera vez
-    if (newStatus === 'approved' && prevStatus !== 'approved') {
-      for (const it of items || []) {
-        const pid = Number(it.id);
-        const qty = Number(it.quantity);
-        if (!Number.isFinite(pid) || !Number.isFinite(qty) || qty <= 0) continue;
-        await client.query('UPDATE products SET stock = stock - $1 WHERE product_id = $2', [qty, pid]);
+    if (orderRow.rowCount === 0) throw new Error('order_not_found');
+
+    const order = orderRow.rows[0] || {};
+    const alreadyApproved = String(order.status || '').toLowerCase() === 'approved';
+    const alreadyPaymentId = order.payment_id ? Number(order.payment_id) : null;
+
+    // Idempotencia: si ya estaba aprobado con el mismo payment_id, no re-procesar
+    if (alreadyApproved && alreadyPaymentId && Number(paymentId) === alreadyPaymentId) {
+      await client.query('COMMIT');
+      return { status: 'approved', already: true };
+    }
+
+    const normalizedPaymentStatus = String(paymentStatus || '').toLowerCase();
+    const shouldApprove = normalizedPaymentStatus === 'approved';
+
+    // 2) Actualizar la orden. Hacemos "cascading fallback" por si faltan columnas en la BD.
+    const updateAttempts = [
+      {
+        sql: `
+          UPDATE orders
+          SET
+            status = CASE WHEN $4 THEN 'approved' ELSE status END,
+            payment_id = $2,
+            payer_email = $3,
+            payment_status = $5,
+            approved_at = CASE WHEN $4 THEN COALESCE(approved_at, NOW()) ELSE approved_at END,
+            updated_at = NOW()
+          WHERE order_id = $1
+        `,
+        params: [orderId, paymentId, payerEmail || null, shouldApprove, normalizedPaymentStatus],
+      },
+      {
+        sql: `
+          UPDATE orders
+          SET
+            status = CASE WHEN $4 THEN 'approved' ELSE status END,
+            payment_id = $2,
+            payer_email = $3,
+            updated_at = NOW()
+          WHERE order_id = $1
+        `,
+        params: [orderId, paymentId, payerEmail || null, shouldApprove],
+      },
+      {
+        sql: shouldApprove
+          ? `UPDATE orders SET status='approved' WHERE order_id=$1`
+          : `UPDATE orders SET status=status WHERE order_id=$1`,
+        params: [orderId],
+      },
+    ];
+
+    let updated = false;
+    for (const attempt of updateAttempts) {
+      try {
+        await client.query(attempt.sql, attempt.params);
+        updated = true;
+        break;
+      } catch (e) {
+        if (e?.code === '42703') continue; // undefined_column -> probar siguiente intento
+        throw e;
+      }
+    }
+    if (!updated) throw new Error('order_update_failed');
+
+    // 3) Setear estado_domicilio/fecha_domicilio si existen (si no existen, no romper el flujo)
+    if (shouldApprove) {
+      try {
+        await client.query(
+          `
+          UPDATE orders
+          SET
+            estado_domicilio = CASE
+              WHEN COALESCE(domicilio_modo,'')='domicilio' THEN 'pendiente'
+              ELSE 'no_aplica'
+            END,
+            fecha_domicilio = CASE
+              WHEN COALESCE(domicilio_modo,'')='domicilio' THEN NOW()
+              ELSE NULL
+            END
+          WHERE order_id = $1
+          `,
+          [orderId]
+        );
+      } catch (e) {
+        if (e?.code !== '42703') throw e;
+      }
+    }
+
+    // 4) Si por algún motivo la orden no tiene items (o no se guardaron al crear la preferencia),
+    //    intenta insertarlos desde MP additional_info.items. (Esto NO reemplaza tu lógica actual; es un "seguro".)
+    let hasItems = true;
+    try {
+      const chk = await client.query(`SELECT 1 FROM order_items WHERE order_id=$1 LIMIT 1`, [orderId]);
+      hasItems = chk.rowCount > 0;
+    } catch (e) {
+      // si no existe la tabla order_items, no hacemos nada
+      if (e?.code !== '42P01') throw e;
+    }
+
+    if (!hasItems && Array.isArray(items) && items.length) {
+      for (const it of items) {
+        const productId = Number(it?.id ?? it?.product_id ?? it?.metadata?.product_id ?? null);
+        const quantity = Number(it?.quantity ?? it?.qty ?? 1) || 1;
+        const unit_price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
+        if (!productId) continue;
+
+        try {
+          await client.query(
+            `INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES ($1,$2,$3,$4)`,
+            [orderId, productId, quantity, unit_price]
+          );
+        } catch (e) {
+          // duplicado o columnas diferentes -> intentar sin unit_price
+          if (e?.code === '23505') continue;
+          if (e?.code === '42703') {
+            try {
+              await client.query(
+                `INSERT INTO order_items (order_id, product_id, quantity) VALUES ($1,$2,$3)`,
+                [orderId, productId, quantity]
+              );
+            } catch (e2) {
+              if (e2?.code !== '23505') throw e2;
+            }
+          } else {
+            throw e;
+          }
+        }
+
+        // Stock: no romper si no existe columna stock
+        try {
+          await client.query(
+            `UPDATE products SET stock = GREATEST(stock - $2, 0) WHERE product_id = $1`,
+            [productId, quantity]
+          );
+        } catch (e) {
+          if (e?.code !== '42703') throw e;
+        }
       }
     }
 
     await client.query('COMMIT');
-    return { updated: true, status: newStatus };
-  } catch (e) {
-    await client.query('ROLLBACK');
-    throw e;
+    return { status: shouldApprove ? 'approved' : normalizedPaymentStatus || 'unknown' };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
   } finally {
     client.release();
   }
 }
 
-/* ========= WEBHOOK (POST y GET) ========= */
-async function webhookHandler(req, res) {
+app.post('/api/payments/webhook', async (req, res) => {
   try {
     const paymentId = Number(
       req.query?.id ||
@@ -931,6 +1130,7 @@ async function webhookHandler(req, res) {
     const p = pay?.response;
     if (!p) return res.status(200).json({ ok: true, ignored: true });
 
+    // order_id desde external_reference o metadata.order_id
     const orderId = Number(p.external_reference || p.metadata?.order_id);
     if (!orderId) return res.status(200).json({ ok: true, ignored: true });
 
@@ -945,22 +1145,15 @@ async function webhookHandler(req, res) {
     return res.status(200).json({ ok: true, ...result });
   } catch (err) {
     console.error('webhook error', err);
+    // MP reintenta; respondemos 200 para no saturar si hay error temporal
     return res.status(200).json({ ok: true });
   }
-}
+});
 
-app.post('/api/payments/webhook', webhookHandler);
-app.get('/api/payments/webhook', webhookHandler);
-
-/* ========= CONFIRM POST-PAGO ========= */
+// Confirmación post-pago: el cliente vuelve desde MP y validamos el payment_id contra MP
 app.post('/api/payments/confirm', async (req, res) => {
   try {
-    const paymentId = Number(
-      req.body?.payment_id ||
-        req.body?.collection_id ||
-        req.query?.payment_id ||
-        req.query?.collection_id
-    );
+    const paymentId = Number(req.body?.payment_id || req.body?.collection_id || req.query?.payment_id || req.query?.collection_id);
     if (!paymentId) return res.status(400).json({ error: 'missing_payment_id' });
 
     const pay = await mp.payment.get(Number(paymentId));
@@ -978,25 +1171,19 @@ app.post('/api/payments/confirm', async (req, res) => {
       items: p.additional_info?.items || [],
     });
 
-    // ✅ FIX: SIEMPRE generar invoice_url con fallback
+    // Armar link de factura imprimible (público con token)
     const token = createInvoiceToken(orderId);
-    const front = resolveFrontBase();
-    const invoice_url = `${front.replace(/\/$/, '')}/factura.html?order_id=${orderId}&token=${token}`;
+    const front = process.env.FRONT_URL || '';
+    const invoice_url = front ? `${front.replace(/\/$/, '')}/factura.html?order_id=${orderId}&token=${token}` : null;
 
-    return res.json({
-      ok: true,
-      order_id: orderId,
-      payment_id: paymentId,
-      status: result.status,
-      invoice_url,
-    });
+    return res.json({ ok: true, order_id: orderId, payment_id: paymentId, status: result.status, invoice_url });
   } catch (err) {
     console.error('confirm error', err);
-    return res.status(500).json({ error: 'confirm_failed' });
+    return res.status(500).json({ error: 'confirm_failed', message: String(err?.message || err) });
   }
 });
 
-/* ========= TOKENS FACTURA ========= */
+// Token simple para compartir factura sin login (expira en 7 días)
 function createInvoiceToken(orderId, ttlSeconds = 7 * 24 * 3600) {
   const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
   const payload = `${orderId}.${exp}`;
@@ -1019,7 +1206,7 @@ function verifyInvoiceToken(orderId, token) {
   }
 }
 
-/* ========= FACTURA PÚBLICA ========= */
+// JSON público para renderizar factura imprimible en el frontend
 app.get('/api/invoices/:orderId', async (req, res) => {
   try {
     const orderId = Number(req.params.orderId);
@@ -1036,18 +1223,10 @@ app.get('/api/invoices/:orderId', async (req, res) => {
     );
     if (!orders.length) return res.status(404).json({ error: 'not_found' });
 
-    // ✅ FIX: LEFT JOIN para no perder filas con product_id NULL
     const { rows: items } = await query(
-      `SELECT
-         oi.product_id,
-         COALESCE(
-           p.name,
-           CASE WHEN oi.product_id IS NULL THEN 'Domicilio / Envío' ELSE 'Producto' END
-         ) AS name,
-         oi.quantity,
-         oi.unit_price
+      `SELECT oi.product_id, p.name, oi.quantity, oi.unit_price
        FROM order_items oi
-       LEFT JOIN products p ON p.product_id = oi.product_id
+       JOIN products p ON p.product_id = oi.product_id
        WHERE oi.order_id = $1
        ORDER BY oi.order_item_id ASC`,
       [orderId]
@@ -1068,31 +1247,44 @@ app.get('/api/invoices/:orderId', async (req, res) => {
   }
 });
 
+
 /* =========================================
    REPORTES FINANCIEROS (MICROSERVICIO PYTHON)
 ========================================= */
+
 app.get('/api/reports/finanzas', requireAdmin, async (req, res) => {
   try {
+    // format viene del front: 'pdf' o 'xlsx'
     const format = req.query.format === 'pdf' ? 'pdf' : 'xlsx';
 
+    // URL base del microservicio Python (configurar en .env en Render)
     const pythonBase = process.env.PY_ANALYTICS_URL || 'http://127.0.0.1:5001';
+
+    // Cabecera secreta para autenticar a Python (configurar REPORT_SECRET en .env)
     const reportSecret = process.env.REPORT_SECRET || '';
 
     const url = `${pythonBase}/reports/finanzas?formato=${encodeURIComponent(format)}`;
 
     const proxRes = await fetch(url, {
       method: 'GET',
-      headers: { 'X-REPORT-SECRET': reportSecret },
+      headers: {
+        'X-REPORT-SECRET': reportSecret,
+      },
     });
 
     if (!proxRes.ok) {
       const txt = await proxRes.text().catch(() => null);
       console.error('Python report failed', proxRes.status, txt);
-      return res.status(502).json({ error: 'report_downstream_failed', status: proxRes.status });
+      return res
+        .status(502)
+        .json({ error: 'report_downstream_failed', status: proxRes.status });
     }
 
-    const contentType = proxRes.headers.get('content-type') || 'application/octet-stream';
-    const contentDisp = proxRes.headers.get('content-disposition') || `attachment; filename="reporte.${format}"`;
+    const contentType =
+      proxRes.headers.get('content-type') || 'application/octet-stream';
+    const contentDisp =
+      proxRes.headers.get('content-disposition') ||
+      `attachment; filename="reporte.${format}"`;
 
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', contentDisp);
@@ -1107,6 +1299,7 @@ app.get('/api/reports/finanzas', requireAdmin, async (req, res) => {
 /* =========================================
    ORDERS (VENTAS / DOMICILIOS)
 ========================================= */
+
 app.get('/api/orders', requireStaff, async (req, res) => {
   try {
     const { status, q, from, to } = req.query;
@@ -1171,6 +1364,8 @@ app.get('/api/orders', requireStaff, async (req, res) => {
 /* =========================================
    STATS (ESTADÍSTICAS)
 ========================================= */
+
+// Solo staff (ADMIN / DEV_ADMIN / STAFF)
 app.get('/api/stats/sales', requireStaff, async (req, res) => {
   try {
     const range = req.query.range || 'month';
@@ -1192,12 +1387,18 @@ app.get('/api/stats/sales', requireStaff, async (req, res) => {
       FROM orders WHERE status <> 'initiated'
     `);
 
-    const global = globalRows[0] || { total_orders: 0, approved_orders: 0 };
+    const global = globalRows[0] || {
+      total_orders: 0,
+      approved_orders: 0,
+    };
 
     const ingresos = Number(totals.total_amount || 0);
     const ordenes = Number(totals.orders_count || 0);
     const ticket = ordenes > 0 ? Math.round(ingresos / ordenes) : 0;
-    const rate = global.total_orders > 0 ? Math.round((global.approved_orders / global.total_orders) * 100) : 0;
+    const rate =
+      global.total_orders > 0
+        ? Math.round((global.approved_orders / global.total_orders) * 100)
+        : 0;
 
     let groupExpr = 'date(created_at)';
     let limit = 12;
@@ -1231,18 +1432,32 @@ app.get('/api/stats/sales', requireStaff, async (req, res) => {
       const d = new Date(row.bucket);
       let label = '';
 
-      if (range === 'day') label = d.getHours().toString().padStart(2, '0') + 'h';
-      else if (range === 'week') label = d.toLocaleDateString('es-CO', { weekday: 'short' });
-      else label = d.toLocaleDateString('es-CO', { day: '2-digit', month: 'short' });
+      if (range === 'day') {
+        label = d.getHours().toString().padStart(2, '0') + 'h';
+      } else if (range === 'week') {
+        label = d.toLocaleDateString('es-CO', { weekday: 'short' });
+      } else {
+        label = d.toLocaleDateString('es-CO', {
+          day: '2-digit',
+          month: 'short',
+        });
+      }
 
-      return { label, value: Number(row.total_amount || 0) };
+      return {
+        label,
+        value: Number(row.total_amount || 0),
+      };
     });
 
     res.json({
-      ingresos, ingresosDelta: 0,
-      ordenes, ordenesDelta: 0,
-      ticket, ticketDelta: 0,
-      rate, rateDelta: 0,
+      ingresos,
+      ingresosDelta: 0,
+      ordenes,
+      ordenesDelta: 0,
+      ticket,
+      ticketDelta: 0,
+      rate,
+      rateDelta: 0,
       series,
     });
   } catch (e) {
