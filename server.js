@@ -4,7 +4,7 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import { uploadImageBuffer } from './gcs.js';
-import { MercadoPagoConfig, Preference } from 'mercadopago';
+import { MercadoPagoConfig, Preference, Payment } from 'mercadopago';
 import bcrypt from 'bcryptjs';
 import { pool, query } from './db.js';
 import {
@@ -101,6 +101,7 @@ if (!has(process.env.MP_ACCESS_TOKEN)) {
   console.error('❌ Falta MP_ACCESS_TOKEN en variables de entorno');
 }
 const mp = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN });
+const mpPayment = new Payment(mp);
 
 /* =========================
    SEED ADMIN
@@ -941,173 +942,75 @@ app.post('/api/payments/create', async (req, res) => {
 
 
 async function processPaymentAndMaybeApprove({ orderId, paymentId, paymentStatus, payerEmail, items }) {
+  // Normalizamos estados
+  const status = String(paymentStatus || '').toLowerCase();
+
+  // Solo nos interesa approved/rejected/cancelled/charged_back/refunded
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    // 1) Lock the order row. Some DBs may not have payment_id yet -> fallback select.
-    let orderRow;
-    try {
-      orderRow = await client.query(
-        `SELECT order_id, status, payment_id FROM orders WHERE order_id = $1 FOR UPDATE`,
+    const { rows } = await client.query(
+      'SELECT order_id, status, payment_id, domicilio_modo, estado_domicilio FROM orders WHERE order_id = $1 FOR UPDATE',
+      [orderId]
+    );
+    if (!rows.length) {
+      await client.query('ROLLBACK');
+      return { updated: false, reason: 'order_not_found' };
+    }
+
+    const order = rows[0];
+    const prevStatus = order.status;
+    const prevPaymentId = order.payment_id;
+
+    // Si ya está aprobado y ya tiene payment_id, no hacemos nada (idempotente)
+    if (prevStatus === 'approved' && prevPaymentId) {
+      await client.query('COMMIT');
+      return { updated: false, status: prevStatus };
+    }
+
+    let newStatus = prevStatus;
+    if (status === 'approved') newStatus = 'approved';
+    else if (status === 'rejected') newStatus = 'rejected';
+    else if (status === 'cancelled') newStatus = 'cancelled';
+    else if (status) newStatus = status;
+
+    await client.query(
+      `UPDATE orders
+         SET status = $1,
+             payment_id = $2,
+             payer_email = COALESCE($3, payer_email),
+             updated_at = NOW()
+       WHERE order_id = $4`,
+      [newStatus, paymentId || prevPaymentId, payerEmail, orderId]
+    );
+
+    // Activar domicilio SOLO si el pago quedó aprobado
+    if (newStatus === 'approved' && order.domicilio_modo && !order.estado_domicilio) {
+      await client.query(
+        `UPDATE orders
+           SET estado_domicilio = 'pendiente',
+               fecha_domicilio = NOW()
+         WHERE order_id = $1`,
         [orderId]
       );
-    } catch (e) {
-      if (e?.code === '42703') {
-        orderRow = await client.query(
-          `SELECT order_id, status FROM orders WHERE order_id = $1 FOR UPDATE`,
-          [orderId]
-        );
-      } else {
-        throw e;
-      }
     }
 
-    if (orderRow.rowCount === 0) throw new Error('order_not_found');
-
-    const order = orderRow.rows[0] || {};
-    const alreadyApproved = String(order.status || '').toLowerCase() === 'approved';
-    const alreadyPaymentId = order.payment_id ? Number(order.payment_id) : null;
-
-    // Idempotencia: si ya estaba aprobado con el mismo payment_id, no re-procesar
-    if (alreadyApproved && alreadyPaymentId && Number(paymentId) === alreadyPaymentId) {
-      await client.query('COMMIT');
-      return { status: 'approved', already: true };
-    }
-
-    const normalizedPaymentStatus = String(paymentStatus || '').toLowerCase();
-    const shouldApprove = normalizedPaymentStatus === 'approved';
-
-    // 2) Actualizar la orden. Hacemos "cascading fallback" por si faltan columnas en la BD.
-    const updateAttempts = [
-      {
-        sql: `
-          UPDATE orders
-          SET
-            status = CASE WHEN $4 THEN 'approved' ELSE status END,
-            payment_id = $2,
-            payer_email = $3,
-            payment_status = $5,
-            approved_at = CASE WHEN $4 THEN COALESCE(approved_at, NOW()) ELSE approved_at END,
-            updated_at = NOW()
-          WHERE order_id = $1
-        `,
-        params: [orderId, paymentId, payerEmail || null, shouldApprove, normalizedPaymentStatus],
-      },
-      {
-        sql: `
-          UPDATE orders
-          SET
-            status = CASE WHEN $4 THEN 'approved' ELSE status END,
-            payment_id = $2,
-            payer_email = $3,
-            updated_at = NOW()
-          WHERE order_id = $1
-        `,
-        params: [orderId, paymentId, payerEmail || null, shouldApprove],
-      },
-      {
-        sql: shouldApprove
-          ? `UPDATE orders SET status='approved' WHERE order_id=$1`
-          : `UPDATE orders SET status=status WHERE order_id=$1`,
-        params: [orderId],
-      },
-    ];
-
-    let updated = false;
-    for (const attempt of updateAttempts) {
-      try {
-        await client.query(attempt.sql, attempt.params);
-        updated = true;
-        break;
-      } catch (e) {
-        if (e?.code === '42703') continue; // undefined_column -> probar siguiente intento
-        throw e;
-      }
-    }
-    if (!updated) throw new Error('order_update_failed');
-
-    // 3) Setear estado_domicilio/fecha_domicilio si existen (si no existen, no romper el flujo)
-    if (shouldApprove) {
-      try {
-        await client.query(
-          `
-          UPDATE orders
-          SET
-            estado_domicilio = CASE
-              WHEN COALESCE(domicilio_modo,'')='domicilio' THEN 'pendiente'
-              ELSE 'no_aplica'
-            END,
-            fecha_domicilio = CASE
-              WHEN COALESCE(domicilio_modo,'')='domicilio' THEN NOW()
-              ELSE NULL
-            END
-          WHERE order_id = $1
-          `,
-          [orderId]
-        );
-      } catch (e) {
-        if (e?.code !== '42703') throw e;
-      }
-    }
-
-    // 4) Si por algún motivo la orden no tiene items (o no se guardaron al crear la preferencia),
-    //    intenta insertarlos desde MP additional_info.items. (Esto NO reemplaza tu lógica actual; es un "seguro".)
-    let hasItems = true;
-    try {
-      const chk = await client.query(`SELECT 1 FROM order_items WHERE order_id=$1 LIMIT 1`, [orderId]);
-      hasItems = chk.rowCount > 0;
-    } catch (e) {
-      // si no existe la tabla order_items, no hacemos nada
-      if (e?.code !== '42P01') throw e;
-    }
-
-    if (!hasItems && Array.isArray(items) && items.length) {
-      for (const it of items) {
-        const productId = Number(it?.id ?? it?.product_id ?? it?.metadata?.product_id ?? null);
-        const quantity = Number(it?.quantity ?? it?.qty ?? 1) || 1;
-        const unit_price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
-        if (!productId) continue;
-
-        try {
-          await client.query(
-            `INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES ($1,$2,$3,$4)`,
-            [orderId, productId, quantity, unit_price]
-          );
-        } catch (e) {
-          // duplicado o columnas diferentes -> intentar sin unit_price
-          if (e?.code === '23505') continue;
-          if (e?.code === '42703') {
-            try {
-              await client.query(
-                `INSERT INTO order_items (order_id, product_id, quantity) VALUES ($1,$2,$3)`,
-                [orderId, productId, quantity]
-              );
-            } catch (e2) {
-              if (e2?.code !== '23505') throw e2;
-            }
-          } else {
-            throw e;
-          }
-        }
-
-        // Stock: no romper si no existe columna stock
-        try {
-          await client.query(
-            `UPDATE products SET stock = GREATEST(stock - $2, 0) WHERE product_id = $1`,
-            [productId, quantity]
-          );
-        } catch (e) {
-          if (e?.code !== '42703') throw e;
-        }
+    // Descontar stock SOLO al pasar a approved por primera vez
+    if (newStatus === 'approved' && prevStatus !== 'approved') {
+      for (const it of items || []) {
+        const pid = Number(it.id);
+        const qty = Number(it.quantity);
+        if (!Number.isFinite(pid) || !Number.isFinite(qty) || qty <= 0) continue;
+        await client.query('UPDATE products SET stock = stock - $1 WHERE product_id = $2', [qty, pid]);
       }
     }
 
     await client.query('COMMIT');
-    return { status: shouldApprove ? 'approved' : normalizedPaymentStatus || 'unknown' };
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw err;
+    return { updated: true, status: newStatus };
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
   } finally {
     client.release();
   }
@@ -1151,13 +1054,38 @@ app.post('/api/payments/webhook', async (req, res) => {
 });
 
 // Confirmación post-pago: el cliente vuelve desde MP y validamos el payment_id contra MP
+/* ========= CONFIRM POST-PAGO =========
+   MercadoPago redirige al usuario al FRONT.
+   El FRONT llama a este endpoint para:
+   1) Consultar el pago en MP (por payment_id)
+   2) Obtener order_id desde external_reference/metadata
+   3) Marcar la orden como approved + guardar payment_id/email
+   4) Devolver invoice_url para abrir/descargar factura
+*/
 app.post('/api/payments/confirm', async (req, res) => {
   try {
-    const paymentId = Number(req.body?.payment_id || req.body?.collection_id || req.query?.payment_id || req.query?.collection_id);
+    const paymentId = Number(
+      req.body?.payment_id ||
+      req.body?.collection_id ||
+      req.query?.payment_id ||
+      req.query?.collection_id
+    );
+
     if (!paymentId) return res.status(400).json({ error: 'missing_payment_id' });
 
-    const pay = await mp.payment.get(Number(paymentId));
-    const p = pay?.response;
+    // ✅ SDK mercadopago (Payment) + fallback REST
+    let p;
+    try {
+      const pay = await mpPayment.get({ id: paymentId });
+      p = pay?.response || pay;
+    } catch (e) {
+      const r = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
+        headers: { Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}` },
+      });
+      if (!r.ok) throw new Error(`mp_api_${r.status}`);
+      p = await r.json();
+    }
+
     if (!p) return res.status(400).json({ error: 'payment_not_found' });
 
     const orderId = Number(p.external_reference || p.metadata?.order_id);
@@ -1171,15 +1099,24 @@ app.post('/api/payments/confirm', async (req, res) => {
       items: p.additional_info?.items || [],
     });
 
-    // Armar link de factura imprimible (público con token)
+    // ✅ SIEMPRE generar invoice_url
     const token = createInvoiceToken(orderId);
-    const front = process.env.FRONT_URL || '';
-    const invoice_url = front ? `${front.replace(/\/$/, '')}/factura.html?order_id=${orderId}&token=${token}` : null;
+    const front = resolveFrontBase();
+    const invoice_url = `${front.replace(/\/$/, '')}/factura.html?order_id=${orderId}&token=${token}`;
 
-    return res.json({ ok: true, order_id: orderId, payment_id: paymentId, status: result.status, invoice_url });
+    return res.json({
+      ok: true,
+      order_id: orderId,
+      payment_id: paymentId,
+      status: result.status,
+      invoice_url,
+    });
   } catch (err) {
     console.error('confirm error', err);
-    return res.status(500).json({ error: 'confirm_failed', message: String(err?.message || err) });
+    return res.status(500).json({
+      error: 'confirm_failed',
+      message: err?.message || String(err),
+    });
   }
 });
 
