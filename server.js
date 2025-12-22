@@ -38,13 +38,10 @@ function resolveFrontBase() {
 
 function getBackUrls() {
   const base = resolveFrontBase();
-  // ✅ MercadoPago vuelve a estas URLs después del pago
-  // success -> postpago.html (ahí confirmamos y mostramos factura)
-  // failure/pending -> carrito.html (para que el cliente intente de nuevo)
   return {
-    success: `${base}/postpago.html`,
-    pending: `${base}/carrito.html`,
+    success: `${base}/carrito.html`,
     failure: `${base}/carrito.html`,
+    pending: `${base}/carrito.html`,
   };
 }
 
@@ -104,8 +101,52 @@ if (!has(process.env.MP_ACCESS_TOKEN)) {
   console.error('❌ Falta MP_ACCESS_TOKEN en variables de entorno');
 }
 const mp = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN });
-const preferenceClient = new Preference(mp);
-const paymentClient = new Payment(mp);
+const mpPayment = new Payment(mp);
+
+// ===================== Mercado Pago helpers =====================
+function normalizeMpPaymentResponse(obj) {
+  if (!obj) return null;
+  return (
+    obj.response ||
+    obj.body ||
+    obj.api_response?.body ||
+    obj.api_response?.response ||
+    obj.data ||
+    obj
+  );
+}
+
+async function fetchMpPayment(paymentId) {
+  const id = Number(paymentId);
+  if (!id) return null;
+
+  // 1) SDK (mercadopago v2)
+  try {
+    if (mpPayment && typeof mpPayment.get === 'function') {
+      const r = await mpPayment.get({ id });
+      const p = normalizeMpPaymentResponse(r);
+      if (p && (p.id || p.status || p.external_reference || p.metadata)) return p;
+    }
+  } catch (e) {
+    // seguimos al fallback REST
+    console.error('mpPayment.get error', e?.message || e);
+  }
+
+  // 2) REST fallback (estable y evita diferencias de SDK)
+  try {
+    const token = process.env.MP_ACCESS_TOKEN;
+    if (!token) return null;
+    const resp = await fetch(`https://api.mercadopago.com/v1/payments/${id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch (e) {
+    console.error('MP REST get error', e?.message || e);
+    return null;
+  }
+}
+
 
 /* =========================
    SEED ADMIN
@@ -1032,12 +1073,9 @@ app.post('/api/payments/webhook', async (req, res) => {
 
     // Algunos pings llegan sin id: no es error.
     if (!paymentId) return res.status(200).json({ ok: true, ignored: true });
-
-    const pay = await paymentClient.get({ id: Number(paymentId) });
-    const p = pay?.response;
+    const p = await fetchMpPayment(paymentId);
     if (!p) return res.status(200).json({ ok: true, ignored: true });
-
-    // order_id desde external_reference o metadata.order_id
+// order_id desde external_reference o metadata.order_id
     const orderId = Number(p.external_reference || p.metadata?.order_id);
     if (!orderId) return res.status(200).json({ ok: true, ignored: true });
 
@@ -1058,13 +1096,27 @@ app.post('/api/payments/webhook', async (req, res) => {
 });
 
 // Confirmación post-pago: el cliente vuelve desde MP y validamos el payment_id contra MP
+/* ========= CONFIRM POST-PAGO =========
+   MercadoPago redirige al usuario al FRONT.
+   El FRONT llama a este endpoint para:
+   1) Consultar el pago en MP (por payment_id)
+   2) Obtener order_id desde external_reference/metadata
+   3) Marcar la orden como approved + guardar payment_id/email
+   4) Devolver invoice_url para abrir/descargar factura
+*/
 app.post('/api/payments/confirm', async (req, res) => {
   try {
-    const paymentId = Number(req.body?.payment_id || req.body?.collection_id || req.query?.payment_id || req.query?.collection_id);
+    const paymentId = Number(
+      req.body?.payment_id ||
+      req.body?.collection_id ||
+      req.query?.payment_id ||
+      req.query?.collection_id
+    );
+
     if (!paymentId) return res.status(400).json({ error: 'missing_payment_id' });
 
-    const pay = await paymentClient.get({ id: Number(paymentId) });
-    const p = pay?.response;
+    // ✅ SDK mercadopago (Payment) + fallback REST (robusto)
+    const p = await fetchMpPayment(paymentId);
     if (!p) return res.status(400).json({ error: 'payment_not_found' });
 
     const orderId = Number(p.external_reference || p.metadata?.order_id);
@@ -1078,15 +1130,24 @@ app.post('/api/payments/confirm', async (req, res) => {
       items: p.additional_info?.items || [],
     });
 
-    // Armar link de factura imprimible (público con token)
+    // ✅ SIEMPRE generar invoice_url
     const token = createInvoiceToken(orderId);
-    const front = process.env.FRONT_URL || '';
-    const invoice_url = front ? `${front.replace(/\/$/, '')}/factura.html?order_id=${orderId}&token=${token}` : null;
+    const front = resolveFrontBase();
+    const invoice_url = `${front.replace(/\/$/, '')}/factura.html?order_id=${orderId}&token=${token}`;
 
-    return res.json({ ok: true, order_id: orderId, payment_id: paymentId, status: result.status, invoice_url });
+    return res.json({
+      ok: true,
+      order_id: orderId,
+      payment_id: paymentId,
+      status: result.status,
+      invoice_url,
+    });
   } catch (err) {
     console.error('confirm error', err);
-    return res.status(500).json({ error: 'confirm_failed' });
+    return res.status(500).json({
+      error: 'confirm_failed',
+      message: err?.message || String(err),
+    });
   }
 });
 
