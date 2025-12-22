@@ -16,6 +16,7 @@ import {
   requestPasswordReset,
   resetPassword,
 } from './auth.js';
+import crypto from 'crypto';
 
 const app = express();
 
@@ -799,8 +800,10 @@ app.post('/api/payments/create', async (req, res) => {
         domModo = esLocal ? 'local' : 'coordinadora';
       }
 
-      fechaDom  = new Date();
-      estadoDom = 'pendiente';
+      // Importante: el domicilio NO debe quedar pendiente hasta que el pago se apruebe.
+      // Guardamos la información de envío, pero dejamos estado/fecha en NULL.
+      fechaDom  = null;
+      estadoDom = null;
     } else {
       domModo   = null;
       fechaDom  = null;
@@ -810,6 +813,16 @@ app.post('/api/payments/create', async (req, res) => {
     const back_urls = getBackUrls();
     console.log('🟢 Back URLs (create):', back_urls);
     if (!back_urls) return res.status(500).json({ error: 'missing_front_url' });
+
+    // Base pública (Cloud Run) para construir notification_url del webhook
+    // Preferimos PUBLIC_API_URL, y si no existe la inferimos desde headers.
+    const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https')
+      .split(',')[0]
+      .trim();
+    const host = String(req.headers['x-forwarded-host'] || req.get('host') || '')
+      .split(',')[0]
+      .trim();
+    const publicBase = (process.env.PUBLIC_API_URL || (host ? `${proto}://${host}` : '')).replace(/\/$/, '');
 
     // Total que registra la orden (solo productos)
     const total = norm.reduce(
@@ -838,7 +851,7 @@ app.post('/api/payments/create', async (req, res) => {
            estado_domicilio
          )
          VALUES(
-           'pending',
+           'initiated',
            $1,
            $2,$3,$4,$5,$6,$7,$8,$9,$10
          )
@@ -884,6 +897,8 @@ app.post('/api/payments/create', async (req, res) => {
         quantity: i.quantity,
         currency_id: i.currency_id,
       })),
+      external_reference: String(orderId),
+      notification_url: publicBase ? `${publicBase}/api/payments/webhook` : undefined,
       binary_mode: true,
       back_urls,
       metadata: {
@@ -924,75 +939,215 @@ app.post('/api/payments/create', async (req, res) => {
   }
 });
 
-app.post('/api/payments/webhook', async (req, res) => {
+
+async function processPaymentAndMaybeApprove({ orderId, paymentId, paymentStatus, payerEmail, items }) {
+  // Normalizamos estados
+  const status = String(paymentStatus || '').toLowerCase();
+
+  // Solo nos interesa approved/rejected/cancelled/charged_back/refunded
+  const client = await pool.connect();
   try {
-    const event = req.body;
+    await client.query('BEGIN');
 
-    if (event?.type === 'payment' && event.data?.id) {
-      const paymentId = event.data.id;
+    const { rows } = await client.query(
+      'SELECT order_id, status, payment_id, domicilio_modo, estado_domicilio FROM orders WHERE order_id = $1 FOR UPDATE',
+      [orderId]
+    );
+    if (!rows.length) {
+      await client.query('ROLLBACK');
+      return { updated: false, reason: 'order_not_found' };
+    }
 
-      const resp = await fetch(
-        `https://api.mercadopago.com/v1/payments/${paymentId}`,
-        {
-          headers: { Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}` },
-        }
+    const order = rows[0];
+    const prevStatus = order.status;
+    const prevPaymentId = order.payment_id;
+
+    // Si ya está aprobado y ya tiene payment_id, no hacemos nada (idempotente)
+    if (prevStatus === 'approved' && prevPaymentId) {
+      await client.query('COMMIT');
+      return { updated: false, status: prevStatus };
+    }
+
+    let newStatus = prevStatus;
+    if (status === 'approved') newStatus = 'approved';
+    else if (status === 'rejected') newStatus = 'rejected';
+    else if (status === 'cancelled') newStatus = 'cancelled';
+    else if (status) newStatus = status;
+
+    await client.query(
+      `UPDATE orders
+         SET status = $1,
+             payment_id = $2,
+             payer_email = COALESCE($3, payer_email),
+             updated_at = NOW()
+       WHERE order_id = $4`,
+      [newStatus, paymentId || prevPaymentId, payerEmail, orderId]
+    );
+
+    // Activar domicilio SOLO si el pago quedó aprobado
+    if (newStatus === 'approved' && order.domicilio_modo && !order.estado_domicilio) {
+      await client.query(
+        `UPDATE orders
+           SET estado_domicilio = 'pendiente',
+               fecha_domicilio = NOW()
+         WHERE order_id = $1`,
+        [orderId]
       );
+    }
 
-      const pay = await resp.json();
-      console.log('🟢 WEBHOOK PAYMENT:', pay.id, pay.status);
-
-      const orderIdMeta = pay.metadata?.order_id
-        ? Number(pay.metadata.order_id)
-        : null;
-
-      if (pay.status === 'approved') {
-        const items = pay.additional_info?.items || [];
-
-        // Descontar stock de productos reales
-        for (const item of items) {
-          const productId = Number(item.id);
-          const qty = Number(item.quantity) || 0;
-
-          if (Number.isFinite(productId) && qty > 0) {
-            await query(
-              `UPDATE products
-                 SET stock = stock - $1
-               WHERE product_id = $2`,
-              [qty, productId]
-            );
-          }
-        }
-      }
-
-      if (orderIdMeta) {
-        await query(
-          `UPDATE orders
-             SET status = $1,
-                 payment_id = $2,
-                 payer_email = $3,
-                 updated_at = now()
-           WHERE order_id = $4`,
-          [pay.status, String(paymentId), pay.payer?.email || null, orderIdMeta]
-        );
-      } else {
-        await query(
-          `UPDATE orders
-             SET status = $1,
-                 payment_id = $2,
-                 payer_email = $3,
-                 updated_at = now()
-           WHERE payment_id IS NULL
-           ORDER BY order_id DESC
-           LIMIT 1`,
-          [pay.status, String(paymentId), pay.payer?.email || null]
-        );
+    // Descontar stock SOLO al pasar a approved por primera vez
+    if (newStatus === 'approved' && prevStatus !== 'approved') {
+      for (const it of items || []) {
+        const pid = Number(it.id);
+        const qty = Number(it.quantity);
+        if (!Number.isFinite(pid) || !Number.isFinite(qty) || qty <= 0) continue;
+        await client.query('UPDATE products SET stock = stock - $1 WHERE product_id = $2', [qty, pid]);
       }
     }
-  } catch (e) {
-    console.error('webhook error:', e);
-  }
 
-  res.sendStatus(200);
+    await client.query('COMMIT');
+    return { updated: true, status: newStatus };
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+app.post('/api/payments/webhook', async (req, res) => {
+  try {
+    // MercadoPago manda notificaciones tipo: { data: { id }, type: 'payment' }
+    const paymentId =
+      req.query['data.id'] ||
+      req.body?.data?.id ||
+      req.query.id ||
+      req.body?.id;
+
+    if (!paymentId) {
+      return res.status(200).json({ ok: true, ignored: true });
+
+// Confirmación post-pago: el cliente vuelve desde MP y validamos el payment_id contra MP
+app.post('/api/payments/confirm', async (req, res) => {
+  try {
+    const paymentId = Number(req.body?.payment_id || req.body?.collection_id || req.query?.payment_id || req.query?.collection_id);
+    if (!paymentId) return res.status(400).json({ error: 'missing_payment_id' });
+
+    const pay = await mp.payment.get(Number(paymentId));
+    const p = pay?.response;
+    if (!p) return res.status(400).json({ error: 'payment_not_found' });
+
+    const orderId = Number(p.external_reference || p.metadata?.order_id);
+    if (!orderId) return res.status(400).json({ error: 'missing_order_reference' });
+
+    const result = await processPaymentAndMaybeApprove({
+      orderId,
+      paymentId,
+      paymentStatus: String(p.status || ''),
+      payerEmail: p.payer?.email || null,
+      items: p.additional_info?.items || [],
+    });
+
+    // Armar link de factura imprimible (público con token)
+    const token = createInvoiceToken(orderId);
+    const front = process.env.FRONT_URL || '';
+    const invoice_url = front ? `${front.replace(/\/$/, '')}/factura.html?order_id=${orderId}&token=${token}` : null;
+
+    return res.json({ ok: true, order_id: orderId, payment_id: paymentId, status: result.status, invoice_url });
+  } catch (err) {
+    console.error('confirm error', err);
+    return res.status(500).json({ error: 'confirm_failed' });
+  }
+});
+
+// Token simple para compartir factura sin login (expira en 7 días)
+function createInvoiceToken(orderId, ttlSeconds = 7 * 24 * 3600) {
+  const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
+  const payload = `${orderId}.${exp}`;
+  const secret = process.env.JWT_SECRET || 'dev';
+  const sig = crypto.createHmac('sha256', secret).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+function verifyInvoiceToken(orderId, token) {
+  try {
+    const [oid, exp, sig] = String(token || '').split('.');
+    if (Number(oid) !== Number(orderId)) return false;
+    if (Number(exp) < Math.floor(Date.now() / 1000)) return false;
+    const payload = `${oid}.${exp}`;
+    const secret = process.env.JWT_SECRET || 'dev';
+    const expected = crypto.createHmac('sha256', secret).update(payload).digest('base64url');
+    return expected === sig;
+  } catch {
+    return false;
+  }
+}
+
+// JSON público para renderizar factura imprimible en el frontend
+app.get('/api/invoices/:orderId', async (req, res) => {
+  try {
+    const orderId = Number(req.params.orderId);
+    const token = req.query.token;
+    if (!orderId || !token || !verifyInvoiceToken(orderId, token)) {
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+
+    const { rows: orders } = await query(
+      `SELECT order_id, customer_name, customer_email, customer_phone, customer_city, customer_address,
+              domicilio_modo, domicilio_costo, total_amount, status, created_at
+       FROM orders WHERE order_id = $1`,
+      [orderId]
+    );
+    if (!orders.length) return res.status(404).json({ error: 'not_found' });
+
+    const { rows: items } = await query(
+      `SELECT oi.product_id, p.name, oi.quantity, oi.unit_price
+       FROM order_items oi
+       JOIN products p ON p.product_id = oi.product_id
+       WHERE oi.order_id = $1
+       ORDER BY oi.order_item_id ASC`,
+      [orderId]
+    );
+
+    return res.json({
+      company: {
+        name: 'MR SmartService',
+        phone: '+57 301 419 0633',
+        email: 'yesfri@hotmail.es',
+      },
+      order: orders[0],
+      items,
+    });
+  } catch (err) {
+    console.error('invoice error', err);
+    return res.status(500).json({ error: 'invoice_failed' });
+  }
+});
+
+    }
+
+    const pay = await mp.payment.get(Number(paymentId));
+    const p = pay?.response;
+    if (!p) return res.status(200).json({ ok: true, ignored: true });
+
+    // order_id desde external_reference o metadata.order_id
+    const orderId = Number(p.external_reference || p.metadata?.order_id);
+    if (!orderId) return res.status(200).json({ ok: true, ignored: true });
+
+    const result = await processPaymentAndMaybeApprove({
+      orderId,
+      paymentId: Number(paymentId),
+      paymentStatus: String(p.status || ''),
+      payerEmail: p.payer?.email || null,
+      items: p.additional_info?.items || [],
+    });
+
+    return res.status(200).json({ ok: true, ...result });
+  } catch (err) {
+    console.error('webhook error', err);
+    // MP reintenta; respondemos 200 para no saturar si hay error temporal
+    return res.status(200).json({ ok: true });
+  }
 });
 
 /* =========================================
@@ -1131,7 +1286,7 @@ app.get('/api/stats/sales', requireStaff, async (req, res) => {
       SELECT
         COUNT(*)::int AS total_orders,
         SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END)::int AS approved_orders
-      FROM orders
+      FROM orders WHERE status <> 'initiated'
     `);
 
     const global = globalRows[0] || {
