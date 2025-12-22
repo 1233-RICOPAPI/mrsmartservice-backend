@@ -901,7 +901,6 @@ app.post('/api/payments/create', async (req, res) => {
       notification_url: publicBase ? `${publicBase}/api/payments/webhook` : undefined,
       binary_mode: true,
       back_urls,
-      external_reference: String(orderId),
       metadata: {
         ts: Date.now(),
         order_id: orderId,
@@ -920,7 +919,7 @@ app.post('/api/payments/create', async (req, res) => {
       return res.status(502).json({ error: 'mp_no_init_point' });
     }
 
-    return res.json({ init_point: out.init_point, order_id: orderId });
+    return res.json({ init_point: out.init_point });
   } catch (e) {
     try {
       const status = e?.cause?.status;
@@ -1018,15 +1017,40 @@ async function processPaymentAndMaybeApprove({ orderId, paymentId, paymentStatus
 
 app.post('/api/payments/webhook', async (req, res) => {
   try {
-    // MercadoPago manda notificaciones tipo: { data: { id }, type: 'payment' }
-    const paymentId =
-      req.query['data.id'] ||
-      req.body?.data?.id ||
-      req.query.id ||
-      req.body?.id;
+    const paymentId = Number(
+      req.query?.id ||
+        req.body?.data?.id ||
+        req.body?.id ||
+        req.body?.payment_id ||
+        req.body?.paymentId
+    );
 
-    if (!paymentId) {
-      return res.status(200).json({ ok: true, ignored: true });
+    // Algunos pings llegan sin id: no es error.
+    if (!paymentId) return res.status(200).json({ ok: true, ignored: true });
+
+    const pay = await mp.payment.get(Number(paymentId));
+    const p = pay?.response;
+    if (!p) return res.status(200).json({ ok: true, ignored: true });
+
+    // order_id desde external_reference o metadata.order_id
+    const orderId = Number(p.external_reference || p.metadata?.order_id);
+    if (!orderId) return res.status(200).json({ ok: true, ignored: true });
+
+    const result = await processPaymentAndMaybeApprove({
+      orderId,
+      paymentId: Number(paymentId),
+      paymentStatus: String(p.status || ''),
+      payerEmail: p.payer?.email || null,
+      items: p.additional_info?.items || [],
+    });
+
+    return res.status(200).json({ ok: true, ...result });
+  } catch (err) {
+    console.error('webhook error', err);
+    // MP reintenta; respondemos 200 para no saturar si hay error temporal
+    return res.status(200).json({ ok: true });
+  }
+});
 
 // Confirmación post-pago: el cliente vuelve desde MP y validamos el payment_id contra MP
 app.post('/api/payments/confirm', async (req, res) => {
@@ -1125,31 +1149,6 @@ app.get('/api/invoices/:orderId', async (req, res) => {
   }
 });
 
-    }
-
-    const pay = await mp.payment.get(Number(paymentId));
-    const p = pay?.response;
-    if (!p) return res.status(200).json({ ok: true, ignored: true });
-
-    // order_id desde external_reference o metadata.order_id
-    const orderId = Number(p.external_reference || p.metadata?.order_id);
-    if (!orderId) return res.status(200).json({ ok: true, ignored: true });
-
-    const result = await processPaymentAndMaybeApprove({
-      orderId,
-      paymentId: Number(paymentId),
-      paymentStatus: String(p.status || ''),
-      payerEmail: p.payer?.email || null,
-      items: p.additional_info?.items || [],
-    });
-
-    return res.status(200).json({ ok: true, ...result });
-  } catch (err) {
-    console.error('webhook error', err);
-    // MP reintenta; respondemos 200 para no saturar si hay error temporal
-    return res.status(200).json({ ok: true });
-  }
-});
 
 /* =========================================
    REPORTES FINANCIEROS (MICROSERVICIO PYTHON)
