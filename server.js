@@ -4,7 +4,7 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import { uploadImageBuffer } from './gcs.js';
-import { MercadoPagoConfig, Preference } from 'mercadopago';
+import { MercadoPagoConfig, Preference, Payment } from 'mercadopago';
 import bcrypt from 'bcryptjs';
 import { pool, query } from './db.js';
 import {
@@ -139,6 +139,7 @@ app.get('/api/debug/mp', async (_req, res) => {
     };
 
     const pref = new Preference(mp);
+const payment = new Payment(mp);
     const out = await pref.create({ body });
 
     return res.json({
@@ -1028,8 +1029,8 @@ app.post('/api/payments/webhook', async (req, res) => {
     // Algunos pings llegan sin id: no es error.
     if (!paymentId) return res.status(200).json({ ok: true, ignored: true });
 
-    const pay = await mp.payment.get(Number(paymentId));
-    const p = pay?.response;
+    const pay = await payment.get({ id: Number(paymentId) });
+    const p = pay?.response || pay;
     if (!p) return res.status(200).json({ ok: true, ignored: true });
 
     // order_id desde external_reference o metadata.order_id
@@ -1058,11 +1059,19 @@ app.post('/api/payments/confirm', async (req, res) => {
     const paymentId = Number(req.body?.payment_id || req.body?.collection_id || req.query?.payment_id || req.query?.collection_id);
     if (!paymentId) return res.status(400).json({ error: 'missing_payment_id' });
 
-    const pay = await mp.payment.get(Number(paymentId));
-    const p = pay?.response;
-    if (!p) return res.status(400).json({ error: 'payment_not_found' });
-
-    const orderId = Number(p.external_reference || p.metadata?.order_id);
+    let pay;
+try {
+  pay = await payment.get({ id: Number(paymentId) });
+} catch (e) {
+  // MercadoPago devuelve 404 cuando no encuentra el pago (o token equivocado)
+  const status = e?.status || e?.response?.status;
+  if (status === 404) return res.status(400).json({ error: 'payment_not_found' });
+  console.error('mp payment.get error', e);
+  return res.status(500).json({ error: 'confirm_failed', message: e?.message || String(e) });
+}
+const p = pay?.response || pay;
+if (!p) return res.status(400).json({ error: 'payment_not_found' });
+const orderId = Number(p.external_reference || p.metadata?.order_id);
     if (!orderId) return res.status(400).json({ error: 'missing_order_reference' });
 
     const result = await processPaymentAndMaybeApprove({
@@ -1081,7 +1090,7 @@ app.post('/api/payments/confirm', async (req, res) => {
     return res.json({ ok: true, order_id: orderId, payment_id: paymentId, status: result.status, invoice_url });
   } catch (err) {
     console.error('confirm error', err);
-    return res.status(500).json({ error: 'confirm_failed' });
+    return res.status(500).json({ error: 'confirm_failed', message: err?.message || String(err) });
   }
 });
 
@@ -1112,73 +1121,37 @@ function verifyInvoiceToken(orderId, token) {
 app.get('/api/invoices/:orderId', async (req, res) => {
   try {
     const orderId = Number(req.params.orderId);
-    const token = String(req.query.token || '');
+    const token = req.query.token;
+    if (!orderId || !token || !verifyInvoiceToken(orderId, token)) {
+      return res.status(401).json({ error: 'unauthorized' });
+    }
 
-    if (!orderId || !token) return res.status(400).json({ error: 'missing_params' });
-    if (!verifyInvoiceToken(orderId, token)) return res.status(401).json({ error: 'invalid_token' });
+    const { rows: orders } = await query(
+      `SELECT order_id, customer_name, customer_email, customer_phone, customer_city, customer_address,
+              domicilio_modo, domicilio_costo, total_amount, status, created_at
+       FROM orders WHERE order_id = $1`,
+      [orderId]
+    );
+    if (!orders.length) return res.status(404).json({ error: 'not_found' });
 
-    // ⚠️ IMPORTANTE:
-    // No referenciamos columnas que no existan en tu tabla `orders`.
-    // Usamos solo las columnas que tú ya insertas (domicilio_*) y las de pago (payer_email/payment_id) que migraste.
-    const { rows: orders } = await pool.query(
-      `
-      SELECT
-        order_id,
-        created_at,
-        total_amount,
-        status,
-        COALESCE(payer_email, '') AS payer_email,
-        COALESCE(payment_id, 0) AS payment_id,
-        domicilio_modo,
-        domicilio_costo,
-        domicilio_nombre,
-        domicilio_direccion,
-        domicilio_barrio,
-        domicilio_ciudad,
-        domicilio_telefono,
-        domicilio_nota,
-        fecha_domicilio,
-        estado_domicilio
-      FROM orders
-      WHERE order_id = $1
-      LIMIT 1
-      `,
+    const { rows: items } = await query(
+      `SELECT oi.product_id, p.name, oi.quantity, oi.unit_price
+       FROM order_items oi
+       JOIN products p ON p.product_id = oi.product_id
+       WHERE oi.order_id = $1
+       ORDER BY oi.order_item_id ASC`,
       [orderId]
     );
 
-    if (!orders.length) return res.status(404).json({ error: 'order_not_found' });
-
-    const order = orders[0];
-
-    const { rows: items } = await pool.query(
-      `
-      SELECT
-        oi.order_item_id,
-        oi.product_id,
-        COALESCE(p.name, '') AS name,
-        oi.quantity,
-        oi.price,
-        COALESCE(p.image_url, '') AS image_url
-      FROM order_items oi
-      LEFT JOIN products p ON p.product_id = oi.product_id
-      WHERE oi.order_id = $1
-      ORDER BY oi.order_item_id ASC
-      `,
-      [orderId]
-    );
-
-    // Creamos campos "amigables" para el front (sin depender de columnas nuevas)
-    const orderPublic = {
-      ...order,
-      customer_name: order.domicilio_nombre || 'Cliente',
-      customer_email: order.payer_email || '',
-      customer_phone: order.domicilio_telefono || '',
-      customer_address: order.domicilio_direccion || '',
-      customer_city: order.domicilio_ciudad || '',
-      customer_document: '',
-    };
-
-    return res.json({ ok: true, order: orderPublic, items });
+    return res.json({
+      company: {
+        name: 'MR SmartService',
+        phone: '+57 301 419 0633',
+        email: 'yesfri@hotmail.es',
+      },
+      order: orders[0],
+      items,
+    });
   } catch (err) {
     console.error('invoice error', err);
     return res.status(500).json({ error: 'invoice_failed', message: err?.message || String(err) });
