@@ -101,6 +101,7 @@ if (!has(process.env.MP_ACCESS_TOKEN)) {
   console.error('❌ Falta MP_ACCESS_TOKEN en variables de entorno');
 }
 const mp = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN });
+const mpPayment = new Payment(mp);
 
 /* =========================
    SEED ADMIN
@@ -139,7 +140,6 @@ app.get('/api/debug/mp', async (_req, res) => {
     };
 
     const pref = new Preference(mp);
-const payment = new Payment(mp);
     const out = await pref.create({ body });
 
     return res.json({
@@ -1029,8 +1029,8 @@ app.post('/api/payments/webhook', async (req, res) => {
     // Algunos pings llegan sin id: no es error.
     if (!paymentId) return res.status(200).json({ ok: true, ignored: true });
 
-    const pay = await payment.get({ id: Number(paymentId) });
-    const p = pay?.response || pay;
+    const pay = await mpPayment.get({ id: paymentId });
+    const p = pay?.response ?? pay;
     if (!p) return res.status(200).json({ ok: true, ignored: true });
 
     // order_id desde external_reference o metadata.order_id
@@ -1059,19 +1059,11 @@ app.post('/api/payments/confirm', async (req, res) => {
     const paymentId = Number(req.body?.payment_id || req.body?.collection_id || req.query?.payment_id || req.query?.collection_id);
     if (!paymentId) return res.status(400).json({ error: 'missing_payment_id' });
 
-    let pay;
-try {
-  pay = await payment.get({ id: Number(paymentId) });
-} catch (e) {
-  // MercadoPago devuelve 404 cuando no encuentra el pago (o token equivocado)
-  const status = e?.status || e?.response?.status;
-  if (status === 404) return res.status(400).json({ error: 'payment_not_found' });
-  console.error('mp payment.get error', e);
-  return res.status(500).json({ error: 'confirm_failed', message: e?.message || String(e) });
-}
-const p = pay?.response || pay;
-if (!p) return res.status(400).json({ error: 'payment_not_found' });
-const orderId = Number(p.external_reference || p.metadata?.order_id);
+    const pay = await mpPayment.get({ id: paymentId });
+    const p = pay?.response ?? pay;
+    if (!p) return res.status(400).json({ error: 'payment_not_found' });
+
+    const orderId = Number(p.external_reference || p.metadata?.order_id);
     if (!orderId) return res.status(400).json({ error: 'missing_order_reference' });
 
     const result = await processPaymentAndMaybeApprove({
@@ -1090,7 +1082,7 @@ const orderId = Number(p.external_reference || p.metadata?.order_id);
     return res.json({ ok: true, order_id: orderId, payment_id: paymentId, status: result.status, invoice_url });
   } catch (err) {
     console.error('confirm error', err);
-    return res.status(500).json({ error: 'confirm_failed', message: err?.message || String(err) });
+    return res.status(500).json({ error: 'confirm_failed' });
   }
 });
 
@@ -1127,9 +1119,20 @@ app.get('/api/invoices/:orderId', async (req, res) => {
     }
 
     const { rows: orders } = await query(
-      `SELECT order_id, customer_name, customer_email, customer_phone, customer_city, customer_address,
-              domicilio_modo, domicilio_costo, total_amount, status, created_at
-       FROM orders WHERE order_id = $1`,
+      `SELECT
+          order_id,
+          COALESCE(domicilio_nombre, 'Cliente') AS customer_name,
+          COALESCE(payer_email, '') AS customer_email,
+          COALESCE(domicilio_telefono, '') AS customer_phone,
+          COALESCE(domicilio_ciudad, '') AS customer_city,
+          (COALESCE(domicilio_direccion, '') || CASE WHEN domicilio_barrio IS NULL OR domicilio_barrio = '' THEN '' ELSE ' - ' || domicilio_barrio END) AS customer_address,
+          domicilio_modo,
+          domicilio_costo,
+          total_amount,
+          status,
+          created_at
+       FROM orders
+       WHERE order_id = $1`,
       [orderId]
     );
     if (!orders.length) return res.status(404).json({ error: 'not_found' });
@@ -1154,7 +1157,7 @@ app.get('/api/invoices/:orderId', async (req, res) => {
     });
   } catch (err) {
     console.error('invoice error', err);
-    return res.status(500).json({ error: 'invoice_failed', message: err?.message || String(err) });
+    return res.status(500).json({ error: 'invoice_failed' });
   }
 });
 
