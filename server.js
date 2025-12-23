@@ -4,7 +4,7 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import { uploadImageBuffer } from './gcs.js';
-import { MercadoPagoConfig, Preference, Payment } from 'mercadopago';
+import { MercadoPagoConfig, Preference } from 'mercadopago';
 import bcrypt from 'bcryptjs';
 import { pool, query } from './db.js';
 import {
@@ -38,11 +38,10 @@ function resolveFrontBase() {
 
 function getBackUrls() {
   const base = resolveFrontBase();
-  // Mercado Pago redirige a esta página después del pago
   return {
-    success: `${base}/postpago.html`,
-    failure: `${base}/postpago.html`,
-    pending: `${base}/postpago.html`,
+    success: `${base}/carrito.html`,
+    failure: `${base}/carrito.html`,
+    pending: `${base}/carrito.html`,
   };
 }
 
@@ -102,52 +101,6 @@ if (!has(process.env.MP_ACCESS_TOKEN)) {
   console.error('❌ Falta MP_ACCESS_TOKEN en variables de entorno');
 }
 const mp = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN });
-const mpPayment = new Payment(mp);
-
-// ===================== Mercado Pago helpers =====================
-function normalizeMpPaymentResponse(obj) {
-  if (!obj) return null;
-  return (
-    obj.response ||
-    obj.body ||
-    obj.api_response?.body ||
-    obj.api_response?.response ||
-    obj.data ||
-    obj
-  );
-}
-
-async function fetchMpPayment(paymentId) {
-  const id = Number(paymentId);
-  if (!id) return null;
-
-  // 1) SDK (mercadopago v2)
-  try {
-    if (mpPayment && typeof mpPayment.get === 'function') {
-      const r = await mpPayment.get({ id });
-      const p = normalizeMpPaymentResponse(r);
-      if (p && (p.id || p.status || p.external_reference || p.metadata)) return p;
-    }
-  } catch (e) {
-    // seguimos al fallback REST
-    console.error('mpPayment.get error', e?.message || e);
-  }
-
-  // 2) REST fallback (estable y evita diferencias de SDK)
-  try {
-    const token = process.env.MP_ACCESS_TOKEN;
-    if (!token) return null;
-    const resp = await fetch(`https://api.mercadopago.com/v1/payments/${id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!resp.ok) return null;
-    return await resp.json();
-  } catch (e) {
-    console.error('MP REST get error', e?.message || e);
-    return null;
-  }
-}
-
 
 /* =========================
    SEED ADMIN
@@ -1074,9 +1027,12 @@ app.post('/api/payments/webhook', async (req, res) => {
 
     // Algunos pings llegan sin id: no es error.
     if (!paymentId) return res.status(200).json({ ok: true, ignored: true });
-    const p = await fetchMpPayment(paymentId);
+
+    const pay = await mp.payment.get(Number(paymentId));
+    const p = pay?.response;
     if (!p) return res.status(200).json({ ok: true, ignored: true });
-// order_id desde external_reference o metadata.order_id
+
+    // order_id desde external_reference o metadata.order_id
     const orderId = Number(p.external_reference || p.metadata?.order_id);
     if (!orderId) return res.status(200).json({ ok: true, ignored: true });
 
@@ -1097,27 +1053,13 @@ app.post('/api/payments/webhook', async (req, res) => {
 });
 
 // Confirmación post-pago: el cliente vuelve desde MP y validamos el payment_id contra MP
-/* ========= CONFIRM POST-PAGO =========
-   MercadoPago redirige al usuario al FRONT.
-   El FRONT llama a este endpoint para:
-   1) Consultar el pago en MP (por payment_id)
-   2) Obtener order_id desde external_reference/metadata
-   3) Marcar la orden como approved + guardar payment_id/email
-   4) Devolver invoice_url para abrir/descargar factura
-*/
 app.post('/api/payments/confirm', async (req, res) => {
   try {
-    const paymentId = Number(
-      req.body?.payment_id ||
-      req.body?.collection_id ||
-      req.query?.payment_id ||
-      req.query?.collection_id
-    );
-
+    const paymentId = Number(req.body?.payment_id || req.body?.collection_id || req.query?.payment_id || req.query?.collection_id);
     if (!paymentId) return res.status(400).json({ error: 'missing_payment_id' });
 
-    // ✅ SDK mercadopago (Payment) + fallback REST (robusto)
-    const p = await fetchMpPayment(paymentId);
+    const pay = await mp.payment.get(Number(paymentId));
+    const p = pay?.response;
     if (!p) return res.status(400).json({ error: 'payment_not_found' });
 
     const orderId = Number(p.external_reference || p.metadata?.order_id);
@@ -1131,24 +1073,15 @@ app.post('/api/payments/confirm', async (req, res) => {
       items: p.additional_info?.items || [],
     });
 
-    // ✅ SIEMPRE generar invoice_url
+    // Armar link de factura imprimible (público con token)
     const token = createInvoiceToken(orderId);
-    const front = resolveFrontBase();
-    const invoice_url = `${front.replace(/\/$/, '')}/factura.html?order_id=${orderId}&token=${token}`;
+    const front = process.env.FRONT_URL || '';
+    const invoice_url = front ? `${front.replace(/\/$/, '')}/factura.html?order_id=${orderId}&token=${token}` : null;
 
-    return res.json({
-      ok: true,
-      order_id: orderId,
-      payment_id: paymentId,
-      status: result.status,
-      invoice_url,
-    });
+    return res.json({ ok: true, order_id: orderId, payment_id: paymentId, status: result.status, invoice_url });
   } catch (err) {
     console.error('confirm error', err);
-    return res.status(500).json({
-      error: 'confirm_failed',
-      message: err?.message || String(err),
-    });
+    return res.status(500).json({ error: 'confirm_failed' });
   }
 });
 
@@ -1179,40 +1112,76 @@ function verifyInvoiceToken(orderId, token) {
 app.get('/api/invoices/:orderId', async (req, res) => {
   try {
     const orderId = Number(req.params.orderId);
-    const token = req.query.token;
-    if (!orderId || !token || !verifyInvoiceToken(orderId, token)) {
-      return res.status(401).json({ error: 'unauthorized' });
-    }
+    const token = String(req.query.token || '');
 
-    const { rows: orders } = await query(
-      `SELECT order_id, customer_name, customer_email, customer_phone, customer_city, customer_address,
-              domicilio_modo, domicilio_costo, total_amount, status, created_at
-       FROM orders WHERE order_id = $1`,
+    if (!orderId || !token) return res.status(400).json({ error: 'missing_params' });
+    if (!verifyInvoiceToken(orderId, token)) return res.status(401).json({ error: 'invalid_token' });
+
+    // ⚠️ IMPORTANTE:
+    // No referenciamos columnas que no existan en tu tabla `orders`.
+    // Usamos solo las columnas que tú ya insertas (domicilio_*) y las de pago (payer_email/payment_id) que migraste.
+    const { rows: orders } = await pool.query(
+      `
+      SELECT
+        order_id,
+        created_at,
+        total_amount,
+        status,
+        COALESCE(payer_email, '') AS payer_email,
+        COALESCE(payment_id, 0) AS payment_id,
+        domicilio_modo,
+        domicilio_costo,
+        domicilio_nombre,
+        domicilio_direccion,
+        domicilio_barrio,
+        domicilio_ciudad,
+        domicilio_telefono,
+        domicilio_nota,
+        fecha_domicilio,
+        estado_domicilio
+      FROM orders
+      WHERE order_id = $1
+      LIMIT 1
+      `,
       [orderId]
     );
-    if (!orders.length) return res.status(404).json({ error: 'not_found' });
 
-    const { rows: items } = await query(
-      `SELECT oi.product_id, p.name, oi.quantity, oi.unit_price
-       FROM order_items oi
-       JOIN products p ON p.product_id = oi.product_id
-       WHERE oi.order_id = $1
-       ORDER BY oi.order_item_id ASC`,
+    if (!orders.length) return res.status(404).json({ error: 'order_not_found' });
+
+    const order = orders[0];
+
+    const { rows: items } = await pool.query(
+      `
+      SELECT
+        oi.order_item_id,
+        oi.product_id,
+        COALESCE(p.name, '') AS name,
+        oi.quantity,
+        oi.price,
+        COALESCE(p.image_url, '') AS image_url
+      FROM order_items oi
+      LEFT JOIN products p ON p.product_id = oi.product_id
+      WHERE oi.order_id = $1
+      ORDER BY oi.order_item_id ASC
+      `,
       [orderId]
     );
 
-    return res.json({
-      company: {
-        name: 'MR SmartService',
-        phone: '+57 301 419 0633',
-        email: 'yesfri@hotmail.es',
-      },
-      order: orders[0],
-      items,
-    });
+    // Creamos campos "amigables" para el front (sin depender de columnas nuevas)
+    const orderPublic = {
+      ...order,
+      customer_name: order.domicilio_nombre || 'Cliente',
+      customer_email: order.payer_email || '',
+      customer_phone: order.domicilio_telefono || '',
+      customer_address: order.domicilio_direccion || '',
+      customer_city: order.domicilio_ciudad || '',
+      customer_document: '',
+    };
+
+    return res.json({ ok: true, order: orderPublic, items });
   } catch (err) {
     console.error('invoice error', err);
-    return res.status(500).json({ error: 'invoice_failed' });
+    return res.status(500).json({ error: 'invoice_failed', message: err?.message || String(err) });
   }
 });
 
