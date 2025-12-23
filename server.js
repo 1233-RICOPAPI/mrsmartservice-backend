@@ -1141,7 +1141,7 @@ app.get('/api/invoices/:orderId', async (req, res) => {
       return res.status(401).json({ error: 'unauthorized' });
     }
 
-    const { rows: orders } = await query(
+    const orders = await query(
       `SELECT
           order_id,
           COALESCE(domicilio_nombre, 'Cliente') AS customer_name,
@@ -1160,7 +1160,7 @@ app.get('/api/invoices/:orderId', async (req, res) => {
     );
     if (!orders.length) return res.status(404).json({ error: 'not_found' });
 
-    const { rows: items } = await query(
+    const items = await query(
       `SELECT 
           oi.product_id,
           COALESCE(p.name, CONCAT('Producto #', oi.product_id)) AS name,
@@ -1264,11 +1264,11 @@ app.get('/api/orders', requireStaff, async (req, res) => {
 
     if (from) {
       args.push(from);
-      where.push(`created_at::date >= $${args.length}`);
+      where.push(`(created_at AT TIME ZONE 'America/Bogota')::date >= $${args.length}`);
     }
     if (to) {
       args.push(to);
-      where.push(`created_at::date <= $${args.length}`);
+      where.push(`(created_at AT TIME ZONE 'America/Bogota')::date <= $${args.length}`);
     }
 
     const sql = `
