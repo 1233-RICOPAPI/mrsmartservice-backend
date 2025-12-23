@@ -1310,86 +1310,96 @@ app.get('/api/orders', requireStaff, async (req, res) => {
 // Solo staff (ADMIN / DEV_ADMIN / STAFF)
 app.get('/api/stats/sales', requireStaff, async (req, res) => {
   try {
-    const range = req.query.range || 'month';
+    // --- RANGO + TIMEZONE (Colombia) ---
+const range = (req.query.range || 'month').toLowerCase();
+const tz = 'America/Bogota';
 
-    const totalsRows = await query(`
-      SELECT 
-        COUNT(*)::int                         AS orders_count,
-        COALESCE(SUM(total_amount), 0)::float AS total_amount
-      FROM orders
-      WHERE status = 'approved'
-    `);
+// start: desde cuándo contamos (para KPIs y para serie)
+let startSql = `now() - interval '29 days'`; // month por defecto
+let groupExpr = `(created_at AT TIME ZONE '${tz}')::date`;
+let limit = 30;
 
-    const totals = totalsRows[0] || { orders_count: 0, total_amount: 0 };
+if (range === 'day') {
+  startSql = `now() - interval '23 hours'`;
+  groupExpr = `date_trunc('hour', created_at AT TIME ZONE '${tz}')`;
+  limit = 24;
+} else if (range === 'week') {
+  startSql = `now() - interval '6 days'`;
+  groupExpr = `date_trunc('day', created_at AT TIME ZONE '${tz}')`;
+  limit = 7;
+} else if (range === 'year') {
+  startSql = `date_trunc('month', now() AT TIME ZONE '${tz}') - interval '11 months'`;
+  groupExpr = `date_trunc('month', created_at AT TIME ZONE '${tz}')`;
+  limit = 12;
+}
 
-    const globalRows = await query(`
-      SELECT
-        COUNT(*)::int AS total_orders,
-        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END)::int AS approved_orders
-      FROM orders WHERE status <> 'initiated'
-    `);
+// --- KPIs (ya con rango) ---
+const totalsRows = await query(`
+  SELECT 
+    COUNT(*)::int                         AS orders_count,
+    COALESCE(SUM(total_amount), 0)::float AS total_amount
+  FROM orders
+  WHERE status = 'approved'
+    AND created_at >= (${startSql})
+`);
 
-    const global = globalRows[0] || {
-      total_orders: 0,
-      approved_orders: 0,
-    };
+const totals = totalsRows[0] || { orders_count: 0, total_amount: 0 };
 
-    const ingresos = Number(totals.total_amount || 0);
-    const ordenes = Number(totals.orders_count || 0);
-    const ticket = ordenes > 0 ? Math.round(ingresos / ordenes) : 0;
-    const rate =
-      global.total_orders > 0
-        ? Math.round((global.approved_orders / global.total_orders) * 100)
-        : 0;
+const globalRows = await query(`
+  SELECT
+    COUNT(*)::int AS total_orders,
+    SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END)::int AS approved_orders
+  FROM orders
+  WHERE status <> 'initiated'
+    AND created_at >= (${startSql})
+`);
 
-    let groupExpr = 'date(created_at)';
-    let limit = 12;
+const global = globalRows[0] || { total_orders: 0, approved_orders: 0 };
+
+const ingresos = Number(totals.total_amount || 0);
+const ordenes = Number(totals.orders_count || 0);
+const ticket = ordenes > 0 ? Math.round(ingresos / ordenes) : 0;
+const rate = global.total_orders > 0 ? Math.round((global.approved_orders / global.total_orders) * 100) : 0;
+
+// --- SERIE (últimos N, orden correcto) ---
+const seriesRows = await query(
+  `
+  SELECT
+    ${groupExpr} AS bucket,
+    SUM(total_amount)::float AS total_amount
+  FROM orders
+  WHERE status = 'approved'
+    AND created_at >= (${startSql})
+  GROUP BY bucket
+  ORDER BY bucket DESC
+  LIMIT $1
+  `,
+  [limit]
+);
+
+// lo devolvemos en orden cronológico
+const series = seriesRows
+  .slice()
+  .reverse()
+  .map((row) => {
+    const d = new Date(row.bucket);
+    let label = '';
 
     if (range === 'day') {
-      groupExpr = "date_trunc('hour', created_at)";
-      limit = 24;
+      label = d.getHours().toString().padStart(2, '0') + 'h';
     } else if (range === 'week') {
-      groupExpr = "date_trunc('day', created_at)";
-      limit = 7;
+      label = d.toLocaleDateString('es-CO', { weekday: 'short' });
     } else if (range === 'year') {
-      groupExpr = "date_trunc('month', created_at)";
-      limit = 12;
+      label = d.toLocaleDateString('es-CO', { month: 'short' });
+    } else {
+      label = d.toLocaleDateString('es-CO', { day: '2-digit', month: 'short' });
     }
 
-    const seriesRows = await query(
-      `
-      SELECT
-        ${groupExpr} AS bucket,
-        SUM(total_amount)::float AS total_amount
-      FROM orders
-      WHERE status = 'approved'
-      GROUP BY bucket
-      ORDER BY bucket
-      LIMIT $1
-      `,
-      [limit]
-    );
+    return { label, value: Number(row.total_amount || 0) };
+  });
 
-    const series = seriesRows.map((row) => {
-      const d = new Date(row.bucket);
-      let label = '';
+// y mantienes tu res.json(...) igual
 
-      if (range === 'day') {
-        label = d.getHours().toString().padStart(2, '0') + 'h';
-      } else if (range === 'week') {
-        label = d.toLocaleDateString('es-CO', { weekday: 'short' });
-      } else {
-        label = d.toLocaleDateString('es-CO', {
-          day: '2-digit',
-          month: 'short',
-        });
-      }
-
-      return {
-        label,
-        value: Number(row.total_amount || 0),
-      };
-    });
 
     res.json({
       ingresos,
