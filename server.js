@@ -1176,7 +1176,8 @@ app.get('/api/invoices/:orderId', async (req, res) => {
     return res.json({
       company: {
         name: 'MR SmartService',
-        phone: '+57 301 419 0633',
+        nit: '1121904526',
+        phone: '3014190633',
         email: 'yesfri@hotmail.es',
       },
       order: orders[0],
@@ -1191,7 +1192,7 @@ app.get('/api/invoices/:orderId', async (req, res) => {
 
 /* =========================================
    REPORTES FINANCIEROS (MICROSERVICIO PYTHON)
-========================================= */
+========================================= 
 
 app.get('/api/reports/finanzas', requireAdmin, async (req, res) => {
   try {
@@ -1235,7 +1236,7 @@ app.get('/api/reports/finanzas', requireAdmin, async (req, res) => {
     console.error('/api/reports/finanzas proxy error:', err);
     res.status(500).json({ error: 'report_proxy_error' });
   }
-});
+});*/
 
 /* =========================================
    ORDERS (VENTAS / DOMICILIOS)
