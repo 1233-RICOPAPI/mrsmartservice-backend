@@ -39,9 +39,9 @@ function resolveFrontBase() {
 function getBackUrls() {
   const base = resolveFrontBase();
   return {
-    success: `${base}/carrito.html`,
-    failure: `${base}/carrito.html`,
-    pending: `${base}/carrito.html`,
+    success: `${base}/postpago.html`,
+    failure: `${base}/postpago.html`,
+    pending: `${base}/postpago.html`,
   };
 }
 
@@ -698,13 +698,18 @@ app.post('/api/payments/create', async (req, res) => {
     const { items = [], shipping = null } = req.body;
     if (!items.length) return res.status(400).json({ error: 'no_items' });
 
-    // Normalizar items
+    // Normalizar items (acepta product_id, id, productId)
     const norm = items.map((i) => {
-      const hasPid = i.product_id !== undefined && i.product_id !== null;
+      const rawPid =
+        i.product_id ?? i.productId ?? i.productID ?? i.id ?? i.product ?? null;
+
+      const pidNum = rawPid === null || rawPid === undefined ? null : Number(rawPid);
+      const hasPid = pidNum !== null && Number.isFinite(pidNum);
+
       return {
-        product_id: hasPid ? Number(i.product_id) : null,
-        title: String(i.title || 'Producto'),
-        unit_price: Number(i.unit_price || 0),
+        product_id: hasPid ? pidNum : null,
+        title: String(i.title || i.name || 'Producto'),
+        unit_price: Number(i.unit_price || i.price || 0),
         quantity: Number(i.quantity || 1),
         currency_id: (i.currency_id || 'COP').toUpperCase(),
       };
@@ -825,12 +830,31 @@ app.post('/api/payments/create', async (req, res) => {
       .trim();
     const publicBase = (process.env.PUBLIC_API_URL || (host ? `${proto}://${host}` : '')).replace(/\/$/, '');
 
-    // Total que registra la orden (solo productos)
-    const total = norm.reduce(
-      (a, b) => a + b.unit_price * b.quantity,
-      0
-    );
+    // Subtotal (solo productos) y total final (incluye domicilio si aplica)
+    const subtotal = norm.reduce((a, b) => a + b.unit_price * b.quantity, 0);
+    const total = subtotal + (shippingCost > 0 ? shippingCost : 0);
 
+    // Items para Mercado Pago (productos + domicilio si aplica)
+    const mpItems = [
+      ...norm.map((i) => ({
+        id: i.product_id !== null ? String(i.product_id) : 'EXTRA',
+        title: i.title,
+        unit_price: i.unit_price,
+        quantity: i.quantity,
+        currency_id: i.currency_id,
+      })),
+      ...(shippingCost > 0
+        ? [
+            {
+              id: 'SHIPPING',
+              title: 'Domicilio',
+              unit_price: shippingCost,
+              quantity: 1,
+              currency_id: 'COP',
+            },
+          ]
+        : []),
+    ];
     // ===== Guardar orden + items =====
     const client = await pool.connect();
     let orderId;
@@ -848,13 +872,14 @@ app.post('/api/payments/create', async (req, res) => {
            domicilio_ciudad,
            domicilio_telefono,
            domicilio_nota,
+           domicilio_costo,
            fecha_domicilio,
            estado_domicilio
          )
          VALUES(
            'initiated',
            $1,
-           $2,$3,$4,$5,$6,$7,$8,$9,$10
+           $2,$3,$4,$5,$6,$7,$8,$9,$10,$11
          )
          RETURNING order_id`,
         [
@@ -866,6 +891,7 @@ app.post('/api/payments/create', async (req, res) => {
           domCiudad,
           domTelefono,
           domNota,
+          shippingCost,
           fechaDom,
           estadoDom,
         ]
@@ -873,6 +899,9 @@ app.post('/api/payments/create', async (req, res) => {
       orderId = orderRes.rows[0].order_id;
 
       for (const item of norm) {
+        // Solo persistimos productos (product_id numérico). Los extras (ej. domicilio) van en orders.domicilio_costo
+        if (item.product_id === null) continue;
+
         await client.query(
           `INSERT INTO order_items(order_id, product_id, quantity, unit_price)
            VALUES($1,$2,$3,$4)`,
@@ -891,13 +920,7 @@ app.post('/api/payments/create', async (req, res) => {
 
     // ===== Preferencia de Mercado Pago =====
     const body = {
-      items: norm.map((i) => ({
-        id: i.product_id !== null ? String(i.product_id) : 'EXTRA',
-        title: i.title,
-        unit_price: i.unit_price,
-        quantity: i.quantity,
-        currency_id: i.currency_id,
-      })),
+      items: mpItems,
       external_reference: String(orderId),
       notification_url: publicBase ? `${publicBase}/api/payments/webhook` : undefined,
       binary_mode: true,
@@ -1076,7 +1099,7 @@ app.post('/api/payments/confirm', async (req, res) => {
 
     // Armar link de factura imprimible (público con token)
     const token = createInvoiceToken(orderId);
-    const front = process.env.FRONT_URL || '';
+    const front = resolveFrontBase();
     const invoice_url = front ? `${front.replace(/\/$/, '')}/factura.html?order_id=${orderId}&token=${token}` : null;
 
     return res.json({ ok: true, order_id: orderId, payment_id: paymentId, status: result.status, invoice_url });
@@ -1138,9 +1161,13 @@ app.get('/api/invoices/:orderId', async (req, res) => {
     if (!orders.length) return res.status(404).json({ error: 'not_found' });
 
     const { rows: items } = await query(
-      `SELECT oi.product_id, p.name, oi.quantity, oi.unit_price
+      `SELECT 
+          oi.product_id,
+          COALESCE(p.name, CONCAT('Producto #', oi.product_id)) AS name,
+          oi.quantity,
+          oi.unit_price
        FROM order_items oi
-       JOIN products p ON p.product_id = oi.product_id
+       LEFT JOIN products p ON p.product_id = oi.product_id
        WHERE oi.order_id = $1
        ORDER BY oi.order_item_id ASC`,
       [orderId]
