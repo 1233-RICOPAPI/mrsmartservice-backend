@@ -1,0 +1,88 @@
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+import { BadRequestException, Injectable, InternalServerErrorException } from '@nestjs/common';
+import { PrismaService } from '../../../../common/prisma/prisma.service.js';
+import { normalizeItem, safeNumber } from '../utils/payments.utils.js';
+let ConfirmPaymentUseCase = class ConfirmPaymentUseCase {
+    prisma;
+    constructor(prisma) {
+        this.prisma = prisma;
+    }
+    async execute(body, req) {
+        const b = body || {};
+        const itemsIn = Array.isArray(b.items) ? b.items : Array.isArray(b.cart) ? b.cart : [];
+        if (!itemsIn.length)
+            throw new BadRequestException({ error: 'missing_items' });
+        const status = String(b.status || b.payment_status || '').toUpperCase();
+        const paymentId = String(b.payment_id || b.paymentId || b.id || '').trim();
+        const payer_email = String(b.email || b.payer_email || '').trim();
+        const total_amount = safeNumber(b.total || b.total_amount);
+        const shipping = b.shipping || {};
+        const domicilio_modo = shipping?.mode ?? null;
+        const domicilio_nombre = shipping?.nombre ?? null;
+        const domicilio_direccion = shipping?.direccion ?? null;
+        const domicilio_barrio = shipping?.barrio ?? null;
+        const domicilio_ciudad = shipping?.ciudad ?? null;
+        const domicilio_telefono = shipping?.telefono ?? null;
+        const domicilio_nota = shipping?.nota ?? null;
+        const domicilio_costo = safeNumber(shipping?.shipping_cost ?? shipping?.domicilio_costo ?? 0);
+        const items = itemsIn.map((it) => {
+            const n = normalizeItem(it);
+            const unit = safeNumber(it.unit_price ?? it.price ?? n.unit_price);
+            return { productId: n.productId, quantity: n.quantity, unitPrice: unit, title: n.title };
+        });
+        const computedTotal = items.reduce((acc, it) => acc + Number(it.unitPrice) * Number(it.quantity), 0) + domicilio_costo;
+        const finalTotal = Number.isFinite(total_amount) && total_amount > 0 ? total_amount : computedTotal;
+        try {
+            const created = await this.prisma.$transaction(async (tx) => {
+                const o = await tx.order.create({
+                    data: {
+                        payerEmail: payer_email || null,
+                        totalAmount: String(finalTotal),
+                        status: status || 'PENDING',
+                        paymentId: paymentId || null,
+                        paymentStatus: status || null,
+                        domicilioModo: domicilio_modo,
+                        domicilioNombre: domicilio_nombre,
+                        domicilioDireccion: domicilio_direccion,
+                        domicilioBarrio: domicilio_barrio,
+                        domicilioCiudad: domicilio_ciudad,
+                        domicilioTelefono: domicilio_telefono,
+                        domicilioNota: domicilio_nota,
+                        domicilioCosto: String(domicilio_costo),
+                    },
+                    select: { orderId: true },
+                });
+                await tx.orderItem.createMany({
+                    data: items.map((it) => ({
+                        orderId: o.orderId,
+                        productId: it.productId,
+                        quantity: it.quantity,
+                        unitPrice: String(it.unitPrice),
+                        totalPrice: String(Number(it.unitPrice) * Number(it.quantity)),
+                    })),
+                });
+                return o;
+            });
+            return { ok: true, order_id: created.orderId };
+        }
+        catch (e) {
+            // eslint-disable-next-line no-console
+            console.error('❌ Error guardando orden + items:', e);
+            throw new InternalServerErrorException({ error: 'order_save_failed' });
+        }
+    }
+};
+ConfirmPaymentUseCase = __decorate([
+    Injectable(),
+    __metadata("design:paramtypes", [PrismaService])
+], ConfirmPaymentUseCase);
+export { ConfirmPaymentUseCase };
+//# sourceMappingURL=confirm-payment.usecase.js.map

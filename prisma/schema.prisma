@@ -1,0 +1,143 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// NOTE
+/// This Prisma schema matches the tables created/updated by `src/schema.ts`.
+/// App code uses Prisma typed queries only (no raw SQL).
+
+model User {
+  userId       Int      @id @default(autoincrement()) @map("user_id")
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         String   @default("USER")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  productReviews ProductReview[]
+  passwordResets PasswordReset[]
+
+  @@map("users")
+}
+
+model Product {
+  productId       Int      @id @default(autoincrement()) @map("product_id")
+  name            String
+  description     String?
+  techSheet       String?  @map("tech_sheet")
+  price           Decimal  @default(0) @db.Decimal(12, 2)
+  stock           Int      @default(0)
+  discountPercent Int      @default(0) @map("discount_percent")
+  category        String?
+  imageUrl        String?  @map("image_url")
+  videoUrl        String?  @map("video_url")
+  active          Boolean  @default(true)
+  discountStart   DateTime? @map("discount_start")
+  discountEnd     DateTime? @map("discount_end")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @default(now()) @map("updated_at")
+
+  reviews   ProductReview[]
+  items     OrderItem[]
+
+  @@map("products")
+}
+
+model ProductReview {
+  reviewId   Int      @id @default(autoincrement()) @map("review_id")
+  productId  Int      @map("product_id")
+  authorName String   @map("author_name")
+  rating     Int      @default(5)
+  comment    String?
+  userId     Int?     @map("user_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  product Product @relation(fields: [productId], references: [productId], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [userId], onDelete: SetNull)
+
+  @@map("product_reviews")
+}
+
+model Ad {
+  adId       Int      @id @default(autoincrement()) @map("ad_id")
+  title      String
+  description String?
+  videoUrl   String?  @map("video_url")
+  imageUrl   String?  @map("image_url")
+  linkUrl    String?  @map("link_url")
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @default(now()) @map("updated_at")
+
+  @@map("ads")
+}
+
+model Order {
+  orderId         Int      @id @default(autoincrement()) @map("order_id")
+  buyerName       String?  @map("buyer_name")
+  buyerEmail      String?  @map("buyer_email")
+  buyerPhone      String?  @map("buyer_phone")
+  buyerNit        String?  @map("buyer_nit")
+  buyerCompany    String?  @map("buyer_company")
+
+  status          String   @default("PENDING")
+  totalAmount     Decimal  @default(0) @map("total_amount") @db.Decimal(12, 2)
+
+  paymentMethod   String?  @map("payment_method")
+  paymentId       String?  @map("payment_id")
+  paymentStatus   String?  @map("payment_status")
+
+  mpPreferenceId  String?  @map("mp_preference_id")
+  mpInitPoint     String?  @map("mp_init_point")
+  payerEmail      String?  @map("payer_email")
+
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @default(now()) @map("updated_at")
+
+  // Domicilio/envío
+  domicilioModo      String?   @map("domicilio_modo")
+  domicilioNombre    String?   @map("domicilio_nombre")
+  domicilioDireccion String?   @map("domicilio_direccion")
+  domicilioBarrio    String?   @map("domicilio_barrio")
+  domicilioCiudad    String?   @map("domicilio_ciudad")
+  domicilioTelefono  String?   @map("domicilio_telefono")
+  domicilioNota      String?   @map("domicilio_nota")
+  domicilioCosto     Decimal   @default(0) @map("domicilio_costo") @db.Decimal(12, 2)
+  fechaDomicilio     DateTime? @map("fecha_domicilio")
+  estadoDomicilio    String?   @map("estado_domicilio")
+
+  items OrderItem[]
+
+  @@map("orders")
+}
+
+model OrderItem {
+  orderItemId Int     @id @default(autoincrement()) @map("order_item_id")
+  orderId     Int     @map("order_id")
+  productId   Int     @map("product_id")
+  quantity    Int     @default(1)
+  unitPrice   Decimal @default(0) @map("unit_price") @db.Decimal(12, 2)
+  totalPrice  Decimal @default(0) @map("total_price") @db.Decimal(12, 2)
+
+  order   Order   @relation(fields: [orderId], references: [orderId], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [productId])
+
+  @@map("order_items")
+}
+
+model PasswordReset {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  token     String   @unique
+  used      Boolean  @default(false)
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@map("password_resets")
+}
