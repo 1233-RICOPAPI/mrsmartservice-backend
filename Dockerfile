@@ -1,33 +1,45 @@
-# --- Build stage
+# ---------- Builder ----------
 FROM node:20-alpine AS builder
 WORKDIR /app
 
-# Install deps
-COPY package.json package-lock.json ./
-RUN npm ci
+# Prisma en Alpine suele necesitar openssl
+RUN apk add --no-cache openssl
 
-# Copy source
+# 1) Copia manifests
+COPY package.json package-lock.json ./
+
+# 2) Instala dependencias SIN scripts (evita postinstall=prisma generate antes de tener schema)
+RUN npm ci --ignore-scripts
+
+# 3) Copia el código (incluye prisma/schema.prisma)
 COPY . .
 
-# Build (Nest -> dist)
+# 4) Genera Prisma Client ya con schema dentro
+RUN npx prisma generate
+
+# 5) Build Nest (dist)
 RUN npm run build
 
-# --- Runtime stage
+# 6) Deja solo deps de producción
+RUN npm prune --omit=dev
+
+
+# ---------- Runner ----------
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+ENV PORT=8080
 
-# Install prod deps only
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN apk add --no-cache openssl
 
-# Copy built app
+# Copia lo mínimo para runtime
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/uploads ./uploads
 
-# If you rely on runtime templates/static, copy them here as needed
+# uploads no se debe copiar si está en .dockerignore; créala
+RUN mkdir -p /app/uploads
 
-ENV PORT=8080
 EXPOSE 8080
 CMD ["node","dist/main.js"]
