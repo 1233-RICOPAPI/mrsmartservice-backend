@@ -106,6 +106,8 @@ export class PaymentsService {
       items: normalized,
       back_urls,
       binary_mode: envBool(process.env.MP_BINARY_MODE, true),
+      // ✅ Solo retornar automáticamente al éxito
+      auto_return: 'approved',
       // notification_url: `${baseUrlFromReq(req)}/api/payments/webhook`, // opcional
     };
 

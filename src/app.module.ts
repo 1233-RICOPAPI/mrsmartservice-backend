@@ -8,6 +8,7 @@ import { OrdersModule } from './modules/orders/orders.module.js';
 import { ProductsModule } from './modules/products/products.module.js';
 import { UploadModule } from './modules/upload/upload.module.js';
 import { AdsModule } from './modules/ads/ads.module.js';
+import { SoftwaresModule } from './modules/softwares/softwares.module.js';
 import { StatsModule } from './modules/stats/stats.module.js';
 import { ReviewsModule } from './modules/reviews/reviews.module.js';
 import { UsersModule } from './modules/users/users.module.js';
@@ -27,6 +28,7 @@ import { DiagnosticsModule } from './modules/diagnostics/diagnostics.module.js';
     ReviewsModule,
     UploadModule,
     AdsModule,
+    SoftwaresModule,
     StatsModule,
     UsersModule,
     InvoicesModule,

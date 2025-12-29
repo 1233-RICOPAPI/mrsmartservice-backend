@@ -110,6 +110,8 @@ export class CreatePreferenceUseCase {
       items: normalized,
       back_urls,
       binary_mode: envBool(process.env.MP_BINARY_MODE, true),
+      // ✅ Solo retornar automáticamente al éxito
+      auto_return: 'approved',
     };
 
     const out = await pref.create({ body });

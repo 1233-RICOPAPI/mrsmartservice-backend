@@ -55,6 +55,21 @@ CREATE TABLE IF NOT EXISTS ads (
   updated_at  TIMESTAMP NOT NULL DEFAULT now()
 );
 
+-- ================== SOFTWARES (CATÁLOGO) ==================
+CREATE TABLE IF NOT EXISTS softwares (
+  software_id                SERIAL PRIMARY KEY,
+  name                       TEXT NOT NULL,
+  short_description           TEXT,
+  features                   TEXT,
+  tags                       TEXT,
+  price                      NUMERIC(12,2) NOT NULL DEFAULT 0,
+  image_url                  TEXT,
+  whatsapp_message_template  TEXT,
+  active                     BOOLEAN   NOT NULL DEFAULT TRUE,
+  created_at                 TIMESTAMP NOT NULL DEFAULT now(),
+  updated_at                 TIMESTAMP NOT NULL DEFAULT now()
+);
+
 -- ================== ORDERS ==================
 CREATE TABLE IF NOT EXISTS orders (
   order_id         SERIAL PRIMARY KEY,
@@ -144,6 +159,18 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS estado_domicilio TEXT;
 ALTER TABLE products ADD COLUMN IF NOT EXISTS tech_sheet TEXT;
 ALTER TABLE ads ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT now();
 ALTER TABLE ads ADD COLUMN IF NOT EXISTS link_url TEXT;
+
+-- softwares: compatibilidad
+ALTER TABLE softwares ADD COLUMN IF NOT EXISTS name TEXT;
+ALTER TABLE softwares ADD COLUMN IF NOT EXISTS short_description TEXT;
+ALTER TABLE softwares ADD COLUMN IF NOT EXISTS features TEXT;
+ALTER TABLE softwares ADD COLUMN IF NOT EXISTS tags TEXT;
+ALTER TABLE softwares ADD COLUMN IF NOT EXISTS price NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE softwares ADD COLUMN IF NOT EXISTS image_url TEXT;
+ALTER TABLE softwares ADD COLUMN IF NOT EXISTS whatsapp_message_template TEXT;
+ALTER TABLE softwares ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE softwares ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT now();
+ALTER TABLE softwares ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT now();
 
 -- order_items: si la tabla ya existía de versiones anteriores, asegura columnas usadas por Prisma
 ALTER TABLE order_items ADD COLUMN IF NOT EXISTS unit_price NUMERIC(12,2) NOT NULL DEFAULT 0;

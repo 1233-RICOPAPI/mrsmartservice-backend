@@ -1,7 +1,22 @@
 import { BadRequestException, Injectable, InternalServerErrorException } from '@nestjs/common';
+import crypto from 'crypto';
 import type { Request } from 'express';
 import { PrismaService } from '../../../../common/prisma/prisma.service.js';
 import { normalizeItem, safeNumber } from '../utils/payments.utils.js';
+import { resolveFrontBase } from '../../../auth/application/utils/front-base.js';
+
+function has(v: any) {
+  return typeof v === 'string' && v.trim().length > 0;
+}
+
+// Token público para consumir /api/invoices/:orderId?token=...
+function createInvoiceToken(orderId: number, ttlSeconds = 7 * 24 * 3600) {
+  const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
+  const payload = `${orderId}.${exp}`;
+  const secret = has(process.env.JWT_SECRET) ? process.env.JWT_SECRET! : 'dev';
+  const sig = crypto.createHmac('sha256', secret).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
 
 @Injectable()
 export class ConfirmPaymentUseCase {
@@ -71,7 +86,17 @@ export class ConfirmPaymentUseCase {
         return o;
       });
 
-      return { ok: true, order_id: created.orderId };
+      const orderId = created.orderId;
+      const token = createInvoiceToken(Number(orderId));
+      const front = resolveFrontBase().replace(/\/+$/, '');
+      const invoice_url = `${front}/factura.html?order_id=${encodeURIComponent(String(orderId))}&token=${encodeURIComponent(token)}`;
+
+      return {
+        ok: true,
+        order_id: orderId,
+        status: status || 'PENDING',
+        invoice_url,
+      };
     } catch (e: any) {
       // eslint-disable-next-line no-console
       console.error('❌ Error guardando orden + items:', e);
