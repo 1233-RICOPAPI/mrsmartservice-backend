@@ -60,10 +60,6 @@ async function bootstrap() {
 
   const expressApp = app.getHttpAdapter().getInstance();
 
-  // Cloud Run / reverse proxies: required so req.protocol honors X-Forwarded-Proto.
-  // This avoids generating http:// URLs when the browser is on https:// (mixed content).
-  expressApp.set('trust proxy', 1);
-
   // Límite para JSON (compat con el legacy)
   expressApp.use(express.json({ limit: '1mb' }));
 
