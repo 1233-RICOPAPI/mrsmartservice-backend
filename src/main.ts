@@ -37,8 +37,7 @@ async function bootstrap() {
 
   const allowedOrigins = [
     toOrigin(process.env.FRONT_URL),
-    'https://mrsmartservice-decad.web.app',
-    'https://mrsmartservice-decad.firebaseapp.com',
+    'https://mrsmartservice-front-next.vercel.app',
     'http://localhost:3000',
     'http://127.0.0.1:3000',
     'http://localhost:5500',
