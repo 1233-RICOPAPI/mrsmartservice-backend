@@ -12,6 +12,7 @@ import { SoftwaresModule } from './modules/softwares/softwares.module.js';
 import { StatsModule } from './modules/stats/stats.module.js';
 import { ReviewsModule } from './modules/reviews/reviews.module.js';
 import { UsersModule } from './modules/users/users.module.js';
+import { LicensesModule } from './modules/licenses/licenses.module.js';
 import { InvoicesModule } from './modules/invoices/invoices.module.js';
 import { ReportsModule } from './modules/reports/reports.module.js';
 import { DiagnosticsModule } from './modules/diagnostics/diagnostics.module.js';
@@ -31,6 +32,7 @@ import { DiagnosticsModule } from './modules/diagnostics/diagnostics.module.js';
     SoftwaresModule,
     StatsModule,
     UsersModule,
+    LicensesModule,
     InvoicesModule,
     ReportsModule,
     DiagnosticsModule,

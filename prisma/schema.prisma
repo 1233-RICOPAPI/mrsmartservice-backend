@@ -89,7 +89,52 @@ model Software {
   createdAt              DateTime @default(now()) @map("created_at")
   updatedAt              DateTime @default(now()) @map("updated_at")
 
+  licenses License[]
+
   @@map("softwares")
+}
+
+model License {
+  licenseId       Int      @id @default(autoincrement()) @map("license_id")
+  softwareId      Int      @map("software_id")
+  customerEmail   String?  @map("customer_email")
+  customerName    String?  @map("customer_name")
+  customerNit     String?  @map("customer_nit")
+  customerCompany String?  @map("customer_company")
+
+  licenseType     String   @default("PERPETUAL") @map("license_type")
+  majorMax        Int      @default(1) @map("major_max")
+  maxSites        Int      @default(3) @map("max_sites")
+  maxDevices      Int      @default(6) @map("max_devices")
+  expiresAt       DateTime? @map("expires_at")
+  revoked         Boolean  @default(false)
+  revokedAt       DateTime? @map("revoked_at")
+  notes           String?
+  licenseKey      String   @map("license_key")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @default(now()) @map("updated_at")
+
+  software    Software            @relation(fields: [softwareId], references: [softwareId], onDelete: Cascade)
+  activations LicenseActivation[]
+
+  @@index([softwareId])
+  @@map("licenses")
+}
+
+model LicenseActivation {
+  activationId   Int      @id @default(autoincrement()) @map("activation_id")
+  licenseId      Int      @map("license_id")
+  machineId      String   @map("machine_id")
+  siteCode       String?  @map("site_code")
+  createdAt      DateTime @default(now()) @map("created_at")
+  lastSeenAt     DateTime @default(now()) @map("last_seen_at")
+  deactivatedAt  DateTime? @map("deactivated_at")
+
+  license License @relation(fields: [licenseId], references: [licenseId], onDelete: Cascade)
+
+  @@unique([licenseId, machineId])
+  @@index([machineId])
+  @@map("license_activations")
 }
 
 model Order {

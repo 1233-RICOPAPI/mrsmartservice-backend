@@ -37,7 +37,8 @@ async function bootstrap() {
 
   const allowedOrigins = [
     toOrigin(process.env.FRONT_URL),
-    'https://mrsmartservice-front-next.vercel.app',
+    'https://mrsmartservice-decad.web.app',
+    'https://mrsmartservice-decad.firebaseapp.com',
     'http://localhost:3000',
     'http://127.0.0.1:3000',
     'http://localhost:5500',
@@ -48,7 +49,13 @@ async function bootstrap() {
     origin: (origin, cb) => {
       // Cloud Run + curl/postman no mandan Origin => permitir
       if (!origin) return cb(null, true);
+
+      // Allow Vercel prod + any preview: https://mrsmartservice-front-next(-*)?.vercel.app
+      const vercelOk = /^https:\/\/mrsmartservice-front-next(?:-[a-z0-9-]+)?\.vercel\.app$/i.test(origin);
+      if (vercelOk) return cb(null, true);
+
       if (allowedOrigins.includes(origin)) return cb(null, true);
+
       // Si NO hay FRONT_URL, mejor permitir (para no bloquearte mientras migras)
       if (!has(process.env.FRONT_URL)) return cb(null, true);
       return cb(null, false);

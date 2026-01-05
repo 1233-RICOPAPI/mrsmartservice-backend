@@ -64,6 +64,16 @@ export class AuthService {
     const isDev = String(process.env.NODE_ENV || '').toLowerCase() !== 'production';
 
     const hasSMTP = !!process.env.SMTP_HOST && !!process.env.SMTP_USER && !!process.env.SMTP_PASS;
+    const allowResetUrl = String(process.env.ALLOW_RESET_URL_IN_RESPONSE || '').toLowerCase() === 'true';
+
+    // Si NO hay SMTP configurado:
+    // - En dev (o si se habilita ALLOW_RESET_URL_IN_RESPONSE=true) devolvemos el link para pruebas.
+    // - En prod, devolvemos un error claro para que el admin configure SMTP.
+    if (!hasSMTP) {
+      if (isDev || allowResetUrl) return { ok: true, resetUrl };
+      return { ok: false, error: 'smtp_not_configured' };
+    }
+
     if (hasSMTP) {
       const transporter = nodemailer.createTransport({
         host: process.env.SMTP_HOST,
@@ -80,7 +90,7 @@ export class AuthService {
       });
     }
 
-    return { ok: true, resetUrl: isDev ? resetUrl : undefined };
+    return { ok: true };
   }
 
   async resetPassword(token: string, password: string) {

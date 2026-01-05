@@ -70,6 +70,45 @@ CREATE TABLE IF NOT EXISTS softwares (
   updated_at                 TIMESTAMP NOT NULL DEFAULT now()
 );
 
+-- ================== LICENSES (POSTVENTA) ==================
+CREATE TABLE IF NOT EXISTS licenses (
+  license_id       SERIAL PRIMARY KEY,
+  software_id      INTEGER NOT NULL REFERENCES softwares(software_id) ON DELETE CASCADE,
+
+  customer_email   TEXT,
+  customer_name    TEXT,
+  customer_nit     TEXT,
+  customer_company TEXT,
+
+  license_type     TEXT NOT NULL DEFAULT 'PERPETUAL',
+  major_max        INTEGER NOT NULL DEFAULT 1,
+  max_sites        INTEGER NOT NULL DEFAULT 3,
+  max_devices      INTEGER NOT NULL DEFAULT 6,
+  expires_at       TIMESTAMP NULL,
+  revoked          BOOLEAN NOT NULL DEFAULT FALSE,
+  revoked_at       TIMESTAMP NULL,
+  notes            TEXT,
+  license_key      TEXT NOT NULL,
+  created_at       TIMESTAMP NOT NULL DEFAULT now(),
+  updated_at       TIMESTAMP NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS licenses_software_id_idx ON licenses(software_id);
+
+CREATE TABLE IF NOT EXISTS license_activations (
+  activation_id  SERIAL PRIMARY KEY,
+  license_id     INTEGER NOT NULL REFERENCES licenses(license_id) ON DELETE CASCADE,
+  machine_id     TEXT NOT NULL,
+  site_code      TEXT,
+  created_at     TIMESTAMP NOT NULL DEFAULT now(),
+  last_seen_at   TIMESTAMP NOT NULL DEFAULT now(),
+  deactivated_at TIMESTAMP NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS license_activations_license_machine_key
+  ON license_activations(license_id, machine_id);
+CREATE INDEX IF NOT EXISTS license_activations_machine_id_idx ON license_activations(machine_id);
+
 -- ================== ORDERS ==================
 CREATE TABLE IF NOT EXISTS orders (
   order_id         SERIAL PRIMARY KEY,
@@ -171,6 +210,38 @@ ALTER TABLE softwares ADD COLUMN IF NOT EXISTS whatsapp_message_template TEXT;
 ALTER TABLE softwares ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE softwares ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT now();
 ALTER TABLE softwares ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT now();
+
+-- licenses: compatibilidad
+ALTER TABLE licenses ADD COLUMN IF NOT EXISTS software_id INTEGER;
+ALTER TABLE licenses ADD COLUMN IF NOT EXISTS customer_email TEXT;
+ALTER TABLE licenses ADD COLUMN IF NOT EXISTS customer_name TEXT;
+ALTER TABLE licenses ADD COLUMN IF NOT EXISTS customer_nit TEXT;
+ALTER TABLE licenses ADD COLUMN IF NOT EXISTS customer_company TEXT;
+ALTER TABLE licenses ADD COLUMN IF NOT EXISTS license_type TEXT NOT NULL DEFAULT 'PERPETUAL';
+ALTER TABLE licenses ADD COLUMN IF NOT EXISTS major_max INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE licenses ADD COLUMN IF NOT EXISTS max_sites INTEGER NOT NULL DEFAULT 3;
+ALTER TABLE licenses ADD COLUMN IF NOT EXISTS max_devices INTEGER NOT NULL DEFAULT 6;
+ALTER TABLE licenses ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP NULL;
+ALTER TABLE licenses ADD COLUMN IF NOT EXISTS revoked BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE licenses ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP NULL;
+ALTER TABLE licenses ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE licenses ADD COLUMN IF NOT EXISTS license_key TEXT;
+ALTER TABLE licenses ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT now();
+ALTER TABLE licenses ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT now();
+
+CREATE INDEX IF NOT EXISTS licenses_software_id_idx ON licenses(software_id);
+
+ALTER TABLE license_activations ADD COLUMN IF NOT EXISTS activation_id SERIAL;
+ALTER TABLE license_activations ADD COLUMN IF NOT EXISTS license_id INTEGER;
+ALTER TABLE license_activations ADD COLUMN IF NOT EXISTS machine_id TEXT;
+ALTER TABLE license_activations ADD COLUMN IF NOT EXISTS site_code TEXT;
+ALTER TABLE license_activations ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT now();
+ALTER TABLE license_activations ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMP NOT NULL DEFAULT now();
+ALTER TABLE license_activations ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMP NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS license_activations_license_machine_key
+  ON license_activations(license_id, machine_id);
+CREATE INDEX IF NOT EXISTS license_activations_machine_id_idx ON license_activations(machine_id);
 
 -- order_items: si la tabla ya existía de versiones anteriores, asegura columnas usadas por Prisma
 ALTER TABLE order_items ADD COLUMN IF NOT EXISTS unit_price NUMERIC(12,2) NOT NULL DEFAULT 0;
