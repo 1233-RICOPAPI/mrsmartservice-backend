@@ -189,7 +189,8 @@ model Order {
   fechaDomicilio     DateTime? @map("fecha_domicilio")
   estadoDomicilio    String?   @map("estado_domicilio")
 
-  items OrderItem[]
+  items               OrderItem[]
+  softwareCredentials  SoftwareCredential[]
 
   @@map("orders")
 }
