@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, InternalServerErrorException } from '@nestjs/common';
 import crypto from 'crypto';
+import nodemailer from 'nodemailer';
 import type { Request } from 'express';
 import { PrismaService } from '../../../../common/prisma/prisma.service.js';
 import { normalizeItem, safeNumber } from '../utils/payments.utils.js';
@@ -7,6 +8,12 @@ import { resolveFrontBase } from '../../../auth/application/utils/front-base.js'
 
 function has(v: any) {
   return typeof v === 'string' && v.trim().length > 0;
+}
+
+function str(v: any): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s || null;
 }
 
 // Token público para consumir /api/invoices/:orderId?token=...
@@ -33,6 +40,15 @@ export class ConfirmPaymentUseCase {
     const payer_email = String(b.email || b.payer_email || '').trim();
     const total_amount = safeNumber(b.total || b.total_amount);
 
+    // Comprador / factura: soporta body directo o anidado buyer / factura
+    const buyer = b.buyer || {};
+    const factura = b.factura || {};
+    const buyer_name = str(b.buyer_name ?? buyer.name ?? buyer.buyer_name);
+    const buyer_email = str(b.buyer_email ?? buyer.email ?? payer_email);
+    const buyer_phone = str(b.buyer_phone ?? buyer.phone ?? buyer.telefono);
+    const buyer_nit = str(b.buyer_nit ?? factura.nit ?? buyer.nit);
+    const buyer_company = str(b.buyer_company ?? factura.razon_social ?? buyer.razon_social ?? buyer.company);
+
     const shipping = b.shipping || {};
     const domicilio_modo = shipping?.mode ?? null;
     const domicilio_nombre = shipping?.nombre ?? null;
@@ -56,7 +72,12 @@ export class ConfirmPaymentUseCase {
       const created = await this.prisma.$transaction(async (tx) => {
         const o = await tx.order.create({
           data: {
-            payerEmail: payer_email || null,
+            buyerName: buyer_name,
+            buyerEmail: buyer_email || payer_email || null,
+            buyerPhone: buyer_phone,
+            buyerNit: buyer_nit,
+            buyerCompany: buyer_company,
+            payerEmail: payer_email || buyer_email || null,
             totalAmount: String(finalTotal) as any,
             status: status || 'PENDING',
             paymentId: paymentId || null,
@@ -91,6 +112,14 @@ export class ConfirmPaymentUseCase {
       const front = resolveFrontBase().replace(/\/+$/, '');
       const invoice_url = `${front}/factura.html?order_id=${encodeURIComponent(String(orderId))}&token=${encodeURIComponent(token)}`;
 
+      // Notificar por email al admin cuando el pago está aprobado (evitar spam: From claro, asunto descriptivo)
+      if (status === 'APPROVED') {
+        this.sendOrderNotificationToAdmin(Number(orderId)).catch((err) => {
+          // eslint-disable-next-line no-console
+          console.error('❌ Error enviando notificación de venta por email:', err);
+        });
+      }
+
       return {
         ok: true,
         order_id: orderId,
@@ -103,4 +132,94 @@ export class ConfirmPaymentUseCase {
       throw new InternalServerErrorException({ error: 'order_save_failed' });
     }
   }
+
+  private async sendOrderNotificationToAdmin(orderId: number) {
+    const toEmail = process.env.ADMIN_EMAIL || process.env.NOTIFY_EMAIL || process.env.SMTP_USER;
+    if (!toEmail || !has(process.env.SMTP_HOST) || !has(process.env.SMTP_USER) || !has(process.env.SMTP_PASS)) {
+      return;
+    }
+
+    const order = await this.prisma.order.findUnique({
+      where: { orderId },
+      include: { items: { include: { product: { select: { name: true } } } } },
+    });
+    if (!order) return;
+
+    const isDomicilio = String(order.domicilioModo || '').toLowerCase() === 'domicilio';
+    const entrega = isDomicilio ? 'Envío a domicilio' : 'Recoge en local';
+
+    const rows = (order.items || []).map((it) => {
+      const name = it.product?.name || `Producto #${it.productId}`;
+      const unit = Number(it.unitPrice);
+      const qty = it.quantity;
+      const total = Number(it.totalPrice);
+      return `<tr><td>${escapeHtml(name)}</td><td>${unit.toLocaleString('es-CO')}</td><td>${qty}</td><td>${total.toLocaleString('es-CO')}</td></tr>`;
+    }).join('');
+
+    const totalGeneral = Number(order.totalAmount);
+    const domicilioCosto = Number(order.domicilioCosto || 0);
+
+    let domicilioBlock = '';
+    if (isDomicilio && (order.domicilioNombre || order.domicilioDireccion)) {
+      domicilioBlock = `
+        <p><strong>Datos de entrega:</strong></p>
+        <ul>
+          <li>Nombre: ${escapeHtml(order.domicilioNombre || '-')}</li>
+          <li>Dirección: ${escapeHtml(order.domicilioDireccion || '-')}</li>
+          <li>Barrio: ${escapeHtml(order.domicilioBarrio || '-')}</li>
+          <li>Ciudad: ${escapeHtml(order.domicilioCiudad || '-')}</li>
+          <li>Teléfono: ${escapeHtml(order.domicilioTelefono || '-')}</li>
+          ${order.domicilioNota ? `<li>Nota: ${escapeHtml(order.domicilioNota)}</li>` : ''}
+        </ul>`;
+    }
+
+    const facturaBlock = (order.buyerNit || order.buyerCompany) ? `
+      <p><strong>Facturación (solicitada):</strong></p>
+      <ul>
+        <li>NIT: ${escapeHtml(order.buyerNit || '-')}</li>
+        <li>Razón social: ${escapeHtml(order.buyerCompany || '-')}</li>
+        <li>Correo: ${escapeHtml(order.buyerEmail || order.payerEmail || '-')}</li>
+        <li>Teléfono: ${escapeHtml(order.buyerPhone || '-')}</li>
+      </ul>` : '';
+
+    const html = `
+      <p>Nueva venta aprobada.</p>
+      <p><strong>Pedido #${orderId}</strong> | ${entrega}</p>
+      <p><strong>Comprador:</strong> ${escapeHtml(order.buyerName || 'N/A')} | ${escapeHtml(order.buyerEmail || order.payerEmail || '')}</p>
+      ${domicilioBlock}
+      <p><strong>Productos:</strong></p>
+      <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">
+        <thead><tr><th>Producto</th><th>Valor unitario</th><th>Cantidad</th><th>Total</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      ${domicilioCosto > 0 ? `<p>Envío: ${domicilioCosto.toLocaleString('es-CO')}</p>` : ''}
+      <p><strong>Total general: ${totalGeneral.toLocaleString('es-CO')}</strong></p>
+      ${facturaBlock}
+    `;
+
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT || 587),
+      secure: false,
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    });
+
+    await transporter.sendMail({
+      from: `"MR SmartService" <${process.env.SMTP_USER}>`,
+      to: toEmail,
+      replyTo: order.buyerEmail || order.payerEmail || undefined,
+      subject: `Nueva venta aprobada #${orderId} - MR SmartService`,
+      html,
+    });
+  }
+}
+
+function escapeHtml(s: string | null | undefined): string {
+  if (s == null) return '';
+  const t = String(s);
+  return t
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }

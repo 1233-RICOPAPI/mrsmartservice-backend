@@ -11,6 +11,14 @@ export class UpdateAdDto {
 
   @IsOptional()
   @IsString()
+  video_url?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsString()
   link_url?: string;
 
   @IsOptional()

@@ -70,6 +70,23 @@ CREATE TABLE IF NOT EXISTS softwares (
   updated_at                 TIMESTAMP NOT NULL DEFAULT now()
 );
 
+-- ================== SOFTWARE CREDENTIALS (USUARIO/CLAVE POR SOFTWARE) ==================
+CREATE TABLE IF NOT EXISTS software_credentials (
+  credential_id  SERIAL PRIMARY KEY,
+  software_id    INTEGER NOT NULL REFERENCES softwares(software_id) ON DELETE CASCADE,
+  order_id       INTEGER NULL REFERENCES orders(order_id) ON DELETE SET NULL,
+  username       TEXT NOT NULL,
+  password_hash  TEXT NOT NULL,
+  created_at     TIMESTAMP NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS software_credentials_software_username_key
+  ON software_credentials(software_id, username);
+CREATE INDEX IF NOT EXISTS software_credentials_software_id_idx
+  ON software_credentials(software_id);
+CREATE INDEX IF NOT EXISTS software_credentials_order_id_idx
+  ON software_credentials(order_id);
+
 -- ================== LICENSES (POSTVENTA) ==================
 CREATE TABLE IF NOT EXISTS licenses (
   license_id       SERIAL PRIMARY KEY,
@@ -210,6 +227,33 @@ ALTER TABLE softwares ADD COLUMN IF NOT EXISTS whatsapp_message_template TEXT;
 ALTER TABLE softwares ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE softwares ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT now();
 ALTER TABLE softwares ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT now();
+
+-- software_credentials: compatibilidad
+CREATE TABLE IF NOT EXISTS software_credentials (
+  credential_id  SERIAL PRIMARY KEY,
+  software_id    INTEGER NOT NULL REFERENCES softwares(software_id) ON DELETE CASCADE,
+  order_id       INTEGER NULL REFERENCES orders(order_id) ON DELETE SET NULL,
+  username       TEXT NOT NULL,
+  password_hash  TEXT NOT NULL,
+  created_at     TIMESTAMP NOT NULL DEFAULT now()
+);
+
+-- Si la tabla ya existía (versiones previas), aseguramos la nueva columna y el FK.
+ALTER TABLE software_credentials ADD COLUMN IF NOT EXISTS order_id INTEGER NULL;
+DO $$
+BEGIN
+  ALTER TABLE software_credentials
+    ADD CONSTRAINT software_credentials_order_id_fkey
+    FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE SET NULL;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS software_credentials_software_username_key
+  ON software_credentials(software_id, username);
+CREATE INDEX IF NOT EXISTS software_credentials_software_id_idx
+  ON software_credentials(software_id);
+CREATE INDEX IF NOT EXISTS software_credentials_order_id_idx
+  ON software_credentials(order_id);
 
 -- licenses: compatibilidad
 ALTER TABLE licenses ADD COLUMN IF NOT EXISTS software_id INTEGER;

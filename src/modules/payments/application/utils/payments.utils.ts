@@ -22,7 +22,9 @@ export function baseUrlFromReq(req: Request) {
 export function frontBase() {
   const s = String(process.env.FRONT_URL || '').trim().replace(/\/+$/, '');
   if (s) return s;
-  return process.env.NODE_ENV === 'production' ? 'https://mrsmartservice-decad.web.app' : 'http://localhost:3000';
+  // ✅ Fallback seguro (MercadoPago suele requerir URLs públicas/https)
+  // Si no defines FRONT_URL, usamos el front en Vercel.
+  return 'https://mrsmartservice-front-next-1avp.vercel.app';
 }
 
 export function normalizeItem(i: any) {

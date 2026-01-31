@@ -17,7 +17,7 @@ export class OrdersRepository {
     const { start, end } = parseRange(params?.from, params?.to);
 
     const where: any = {};
-    if (status) where.status = status;
+    if (status) where.status = String(status).toUpperCase();
     if (start || end) {
       where.createdAt = {};
       if (start) where.createdAt.gte = start;

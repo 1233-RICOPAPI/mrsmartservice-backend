@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && prisma generate && tsc -p tsconfig.json",
     "start": "node dist/main.js",
-    "dev": "concurrently -k -n TSC,API \"tsc -w -p tsconfig.json\" \"nodemon --delay 700ms --watch dist dist/main.js\"",
+    "dev": "prisma generate && concurrently -k -n TSC,API \"tsc -w -p tsconfig.json\" \"nodemon --delay 700ms --watch dist dist/main.js\"",
     "dev:tsnode": "node --watch --loader ts-node/esm src/main.ts",
     "start:dev": "npm run dev",
     "db:init": "tsx src/schema.ts",

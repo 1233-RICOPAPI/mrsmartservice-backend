@@ -62,8 +62,13 @@ export class StatsService {
     const range = (String(rangeIn || 'month').toLowerCase() as Range) || 'month';
     const start = startDateForRange(range);
 
+    // En este proyecto los estados se guardan en MAYÚSCULAS (APPROVED/PENDING/etc.).
+    // Soportamos DBs antiguas con minúsculas por compatibilidad.
     const approved = await this.prisma.order.findMany({
-      where: { status: 'approved', createdAt: { gte: start } },
+      where: {
+        status: { in: ['APPROVED', 'approved'] },
+        createdAt: { gte: start },
+      },
       select: { totalAmount: true, createdAt: true },
       orderBy: { createdAt: 'asc' },
     });
@@ -73,11 +78,14 @@ export class StatsService {
     const ticket = totalsOrders > 0 ? Math.round(ingresos / totalsOrders) : 0;
 
     const global = await this.prisma.order.findMany({
-      where: { status: { not: 'initiated' }, createdAt: { gte: start } },
+      where: {
+        status: { notIn: ['INITIATED', 'initiated'] },
+        createdAt: { gte: start },
+      },
       select: { status: true },
     });
     const total_orders = global.length;
-    const approved_orders = global.filter((o) => o.status === 'approved').length;
+    const approved_orders = global.filter((o) => String(o.status).toUpperCase() === 'APPROVED').length;
     const rate = total_orders > 0 ? Math.round((approved_orders / total_orders) * 100) : 0;
 
     // Serie

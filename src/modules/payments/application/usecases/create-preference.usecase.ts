@@ -100,9 +100,9 @@ export class CreatePreferenceUseCase {
     }
 
     const back_urls = {
-      success: `${frontBase()}/postpago.html`,
-      failure: `${frontBase()}/postpago.html`,
-      pending: `${frontBase()}/postpago.html`,
+      success: `${frontBase()}/postpago`,
+      failure: `${frontBase()}/postpago`,
+      pending: `${frontBase()}/postpago`,
     };
 
     const pref = this.mp.preference();

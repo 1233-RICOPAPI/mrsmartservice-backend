@@ -16,6 +16,8 @@ import { LicensesModule } from './modules/licenses/licenses.module.js';
 import { InvoicesModule } from './modules/invoices/invoices.module.js';
 import { ReportsModule } from './modules/reports/reports.module.js';
 import { DiagnosticsModule } from './modules/diagnostics/diagnostics.module.js';
+import { SoftwareCredentialsModule } from './modules/software-credentials/software-credentials.module.js';
+import { SoftwareAuthModule } from './modules/software-auth/software-auth.module.js';
 
 @Module({
   imports: [
@@ -36,6 +38,8 @@ import { DiagnosticsModule } from './modules/diagnostics/diagnostics.module.js';
     InvoicesModule,
     ReportsModule,
     DiagnosticsModule,
+    SoftwareCredentialsModule,
+    SoftwareAuthModule,
   ],
   controllers: [],
   providers: [],

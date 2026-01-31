@@ -48,16 +48,6 @@ export class LicensesRepository {
     });
   }
 
-  getLicenseByKey(licenseKey: string) {
-    return this.prisma.license.findFirst({
-      where: { licenseKey },
-      include: {
-        software: { select: { softwareId: true, name: true } },
-        activations: true,
-      },
-    });
-  }
-
   listLicenses(filter: { softwareId?: number; customerEmail?: string; revoked?: boolean; q?: string }) {
     const where: any = {};
     if (typeof filter.softwareId === 'number') where.softwareId = filter.softwareId;

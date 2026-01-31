@@ -26,7 +26,8 @@ function baseUrlFromReq(req: Request) {
 function frontBase() {
   const s = String(process.env.FRONT_URL || '').trim().replace(/\/+$/, '');
   if (s) return s;
-  return process.env.NODE_ENV === 'production' ? 'https://mrsmartservice-decad.web.app' : 'http://localhost:3000';
+  // ✅ Fallback seguro (MercadoPago suele requerir URLs públicas/https)
+  return 'https://mrsmartservice-front-next-1avp.vercel.app';
 }
 
 function normalizeItem(i: any) {
@@ -96,9 +97,9 @@ export class PaymentsService {
 
     // Back URLs al postpago (front)
     const back_urls = {
-      success: `${frontBase()}/postpago.html`,
-      failure: `${frontBase()}/postpago.html`,
-      pending: `${frontBase()}/postpago.html`,
+      success: `${frontBase()}/postpago`,
+      failure: `${frontBase()}/postpago`,
+      pending: `${frontBase()}/postpago`,
     };
 
     const pref = new Preference(this.mp);
