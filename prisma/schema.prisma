@@ -25,24 +25,24 @@ model User {
 }
 
 model Product {
-  productId       Int      @id @default(autoincrement()) @map("product_id")
+  productId       Int       @id @default(autoincrement()) @map("product_id")
   name            String
   description     String?
-  techSheet       String?  @map("tech_sheet")
-  price           Decimal  @default(0) @db.Decimal(12, 2)
-  stock           Int      @default(0)
-  discountPercent Int      @default(0) @map("discount_percent")
+  techSheet       String?   @map("tech_sheet")
+  price           Decimal   @default(0) @db.Decimal(12, 2)
+  stock           Int       @default(0)
+  discountPercent Int       @default(0) @map("discount_percent")
   category        String?
-  imageUrl        String?  @map("image_url")
-  videoUrl        String?  @map("video_url")
-  active          Boolean  @default(true)
+  imageUrl        String?   @map("image_url")
+  videoUrl        String?   @map("video_url")
+  active          Boolean   @default(true)
   discountStart   DateTime? @map("discount_start")
   discountEnd     DateTime? @map("discount_end")
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @default(now()) @map("updated_at")
 
-  reviews   ProductReview[]
-  items     OrderItem[]
+  reviews ProductReview[]
+  items   OrderItem[]
 
   @@map("products")
 }
@@ -63,33 +63,33 @@ model ProductReview {
 }
 
 model Ad {
-  adId       Int      @id @default(autoincrement()) @map("ad_id")
-  title      String
+  adId        Int      @id @default(autoincrement()) @map("ad_id")
+  title       String
   description String?
-  videoUrl   String?  @map("video_url")
-  imageUrl   String?  @map("image_url")
-  linkUrl    String?  @map("link_url")
-  active     Boolean  @default(true)
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @default(now()) @map("updated_at")
+  videoUrl    String?  @map("video_url")
+  imageUrl    String?  @map("image_url")
+  linkUrl     String?  @map("link_url")
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @default(now()) @map("updated_at")
 
   @@map("ads")
 }
 
 model Software {
-  softwareId             Int      @id @default(autoincrement()) @map("software_id")
-  name                   String
-  shortDescription       String?  @map("short_description")
-  features               String?
-  tags                   String?  // coma-separado: "Pago único, Offline"
-  price                  Decimal  @default(0) @db.Decimal(12, 2)
-  imageUrl               String?  @map("image_url")
-  whatsappMessageTemplate String? @map("whatsapp_message_template")
-  active                 Boolean  @default(true)
-  createdAt              DateTime @default(now()) @map("created_at")
-  updatedAt              DateTime @default(now()) @map("updated_at")
+  softwareId              Int      @id @default(autoincrement()) @map("software_id")
+  name                    String
+  shortDescription        String?  @map("short_description")
+  features                String?
+  tags                    String? // coma-separado: "Pago único, Offline"
+  price                   Decimal  @default(0) @db.Decimal(12, 2)
+  imageUrl                String?  @map("image_url")
+  whatsappMessageTemplate String?  @map("whatsapp_message_template")
+  active                  Boolean  @default(true)
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @default(now()) @map("updated_at")
 
-  licenses License[]
+  licenses    License[]
   credentials SoftwareCredential[]
 
   @@map("softwares")
@@ -113,24 +113,24 @@ model SoftwareCredential {
 }
 
 model License {
-  licenseId       Int      @id @default(autoincrement()) @map("license_id")
-  softwareId      Int      @map("software_id")
-  customerEmail   String?  @map("customer_email")
-  customerName    String?  @map("customer_name")
-  customerNit     String?  @map("customer_nit")
-  customerCompany String?  @map("customer_company")
+  licenseId       Int     @id @default(autoincrement()) @map("license_id")
+  softwareId      Int     @map("software_id")
+  customerEmail   String? @map("customer_email")
+  customerName    String? @map("customer_name")
+  customerNit     String? @map("customer_nit")
+  customerCompany String? @map("customer_company")
 
-  licenseType     String   @default("PERPETUAL") @map("license_type")
-  majorMax        Int      @default(1) @map("major_max")
-  maxSites        Int      @default(3) @map("max_sites")
-  maxDevices      Int      @default(6) @map("max_devices")
-  expiresAt       DateTime? @map("expires_at")
-  revoked         Boolean  @default(false)
-  revokedAt       DateTime? @map("revoked_at")
-  notes           String?
-  licenseKey      String   @map("license_key")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @default(now()) @map("updated_at")
+  licenseType String    @default("PERPETUAL") @map("license_type")
+  majorMax    Int       @default(1) @map("major_max")
+  maxSites    Int       @default(3) @map("max_sites")
+  maxDevices  Int       @default(6) @map("max_devices")
+  expiresAt   DateTime? @map("expires_at")
+  revoked     Boolean   @default(false)
+  revokedAt   DateTime? @map("revoked_at")
+  notes       String?
+  licenseKey  String    @map("license_key")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @default(now()) @map("updated_at")
 
   software    Software            @relation(fields: [softwareId], references: [softwareId], onDelete: Cascade)
   activations LicenseActivation[]
@@ -140,13 +140,13 @@ model License {
 }
 
 model LicenseActivation {
-  activationId   Int      @id @default(autoincrement()) @map("activation_id")
-  licenseId      Int      @map("license_id")
-  machineId      String   @map("machine_id")
-  siteCode       String?  @map("site_code")
-  createdAt      DateTime @default(now()) @map("created_at")
-  lastSeenAt     DateTime @default(now()) @map("last_seen_at")
-  deactivatedAt  DateTime? @map("deactivated_at")
+  activationId  Int       @id @default(autoincrement()) @map("activation_id")
+  licenseId     Int       @map("license_id")
+  machineId     String    @map("machine_id")
+  siteCode      String?   @map("site_code")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  lastSeenAt    DateTime  @default(now()) @map("last_seen_at")
+  deactivatedAt DateTime? @map("deactivated_at")
 
   license License @relation(fields: [licenseId], references: [licenseId], onDelete: Cascade)
 
@@ -156,26 +156,26 @@ model LicenseActivation {
 }
 
 model Order {
-  orderId         Int      @id @default(autoincrement()) @map("order_id")
-  buyerName       String?  @map("buyer_name")
-  buyerEmail      String?  @map("buyer_email")
-  buyerPhone      String?  @map("buyer_phone")
-  buyerNit        String?  @map("buyer_nit")
-  buyerCompany    String?  @map("buyer_company")
+  orderId      Int     @id @default(autoincrement()) @map("order_id")
+  buyerName    String? @map("buyer_name")
+  buyerEmail   String? @map("buyer_email")
+  buyerPhone   String? @map("buyer_phone")
+  buyerNit     String? @map("buyer_nit")
+  buyerCompany String? @map("buyer_company")
 
-  status          String   @default("PENDING")
-  totalAmount     Decimal  @default(0) @map("total_amount") @db.Decimal(12, 2)
+  status      String  @default("PENDING")
+  totalAmount Decimal @default(0) @map("total_amount") @db.Decimal(12, 2)
 
-  paymentMethod   String?  @map("payment_method")
-  paymentId       String?  @map("payment_id")
-  paymentStatus   String?  @map("payment_status")
+  paymentMethod String? @map("payment_method")
+  paymentId     String? @map("payment_id")
+  paymentStatus String? @map("payment_status")
 
-  mpPreferenceId  String?  @map("mp_preference_id")
-  mpInitPoint     String?  @map("mp_init_point")
-  payerEmail      String?  @map("payer_email")
+  mpPreferenceId String? @map("mp_preference_id")
+  mpInitPoint    String? @map("mp_init_point")
+  payerEmail     String? @map("payer_email")
 
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @default(now()) @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @map("updated_at")
 
   // Domicilio/envío
   domicilioModo      String?   @map("domicilio_modo")
@@ -190,7 +190,7 @@ model Order {
   estadoDomicilio    String?   @map("estado_domicilio")
 
   items               OrderItem[]
-  softwareCredentials  SoftwareCredential[]
+  softwareCredentials SoftwareCredential[]
 
   @@map("orders")
 }
