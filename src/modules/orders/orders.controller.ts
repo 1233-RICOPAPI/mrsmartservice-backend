@@ -8,7 +8,7 @@ import { ListOrdersDto } from './dto/list-orders.dto.js';
 
 @Controller('api')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('ADMIN', 'DEV_ADMIN', 'STAFF')
+@Roles('ADMIN', 'DEV_ADMIN', 'STAFF', 'CONTADOR')
 export class OrdersController {
   constructor(private readonly listUC: ListOrdersUseCase, private readonly detailUC: GetOrderDetailUseCase) {}
 

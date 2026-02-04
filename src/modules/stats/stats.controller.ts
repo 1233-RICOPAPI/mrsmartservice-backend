@@ -7,7 +7,7 @@ import { GetSalesStatsUseCase } from './application/usecases/get-sales-stats.use
 
 @Controller('api/stats')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('ADMIN', 'DEV_ADMIN', 'STAFF')
+@Roles('ADMIN', 'DEV_ADMIN', 'STAFF', 'CONTADOR')
 export class StatsController {
   constructor(private readonly salesUC: GetSalesStatsUseCase) {}
 

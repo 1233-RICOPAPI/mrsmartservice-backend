@@ -35,4 +35,26 @@ export class UsersRepository {
   deleteById(id: number) {
     return this.prisma.user.delete({ where: { userId: id } });
   }
+
+  findByEmail(email: string) {
+    return this.prisma.user.findUnique({
+      where: { email },
+      select: { userId: true, email: true, role: true },
+    });
+  }
+
+  findContador() {
+    return this.prisma.user.findFirst({
+      where: { role: 'CONTADOR' },
+      select: { userId: true, email: true, role: true, createdAt: true },
+    });
+  }
+
+  updateById(id: number, data: { email?: string; passwordHash?: string }) {
+    return this.prisma.user.update({
+      where: { userId: id },
+      data,
+      select: { userId: true, email: true, role: true, createdAt: true },
+    });
+  }
 }

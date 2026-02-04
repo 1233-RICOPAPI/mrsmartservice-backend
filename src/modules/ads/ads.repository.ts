@@ -11,6 +11,10 @@ export class AdsRepository {
     return this.prisma.ad.findMany({ where: { active: true }, orderBy: { adId: 'desc' } });
   }
 
+  findById(id: number) {
+    return this.prisma.ad.findUnique({ where: { adId: id } });
+  }
+
   listAdmin() {
     return this.prisma.ad.findMany({ orderBy: { adId: 'desc' } });
   }
@@ -36,7 +40,7 @@ export class AdsRepository {
     if ((dto as any).active !== undefined) data.active = (dto as any).active;
     if ((dto as any).description !== undefined) data.description = (dto as any).description;
     if ((dto as any).video_url !== undefined) data.videoUrl = (dto as any).video_url;
-    if (!Object.keys(data).length) return null;
+    if (!Object.keys(data).length) return this.findById(id);
     return this.prisma.ad.update({ where: { adId: id }, data });
   }
 

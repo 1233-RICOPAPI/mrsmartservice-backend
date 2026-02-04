@@ -9,7 +9,7 @@ import { GetFinanzasReportUseCase } from './application/usecases/get-finanzas-re
 import { ExportReportUseCase } from './application/usecases/export-report.usecase.js';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('ADMIN', 'DEV_ADMIN')
+@Roles('ADMIN', 'DEV_ADMIN', 'CONTADOR')
 @Controller('api/reports')
 export class ReportsController {
   constructor(

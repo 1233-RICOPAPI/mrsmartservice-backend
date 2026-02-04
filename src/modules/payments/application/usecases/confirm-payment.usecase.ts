@@ -141,9 +141,7 @@ export class ConfirmPaymentUseCase {
       const t = e.trim();
       if (t && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)) list.push(t);
     }
-    if (list.length === 0) {
-      list.push('yesfri@hotmail.es', 'aaronmotta5@gmail.com');
-    }
+    list.push('yesfri@hotmail.es', 'aaronmotta5@gmail.com');
     return [...new Set(list)];
   }
 
@@ -196,8 +194,14 @@ export class ConfirmPaymentUseCase {
         <li>Teléfono: ${escapeHtml(order.buyerPhone || '-')}</li>
       </ul>` : '';
 
+    const reminder =
+      isDomicilio
+        ? '<p style="color:#0f172a;background:#fef3c7;padding:8px 12px;border-radius:10px;"><strong>Acción:</strong> Alista el pedido para envío y coordina con el cliente apenas recibas este correo.</p>'
+        : '<p style="color:#0f172a;background:#fef3c7;padding:8px 12px;border-radius:10px;"><strong>Acción:</strong> El cliente puede reclamar en el local dentro de los próximos 4 días hábiles. Ten el producto listo en mostrador.</p>';
+
     const html = `
       <p>Nueva venta aprobada.</p>
+      ${reminder}
       <p><strong>Pedido #${orderId}</strong> | ${entrega}</p>
       <p><strong>Comprador:</strong> ${escapeHtml(order.buyerName || 'N/A')} | ${escapeHtml(order.buyerEmail || order.payerEmail || '')}</p>
       ${domicilioBlock}
@@ -211,6 +215,41 @@ export class ConfirmPaymentUseCase {
       ${facturaBlock}
     `;
 
+    const plainLines = [
+      'Nueva venta aprobada.',
+      isDomicilio
+        ? 'Acción: Alista el pedido para envío y coordina con el cliente de inmediato.'
+        : 'Acción: Cliente recoge en local dentro de 4 días hábiles, prepara el pedido.',
+      `Pedido #${orderId} | ${entrega}`,
+      `Comprador: ${order.buyerName || 'N/A'} | ${order.buyerEmail || order.payerEmail || ''}`,
+    ];
+    if (isDomicilio) {
+      plainLines.push(
+        `Entrega a: ${order.domicilioNombre || '-'}`,
+        `Dirección: ${order.domicilioDireccion || '-'}, ${order.domicilioBarrio || ''}, ${order.domicilioCiudad || ''}`,
+        `Teléfono: ${order.domicilioTelefono || '-'}`,
+        order.domicilioNota ? `Nota: ${order.domicilioNota}` : '',
+      );
+    }
+    if (order.buyerNit || order.buyerCompany) {
+      plainLines.push(
+        'Factura solicitada:',
+        `NIT: ${order.buyerNit || '-'}`,
+        `Razón social: ${order.buyerCompany || '-'}`,
+        `Correo: ${order.buyerEmail || order.payerEmail || '-'}`,
+      );
+    }
+    plainLines.push('Productos:');
+    for (const it of order.items || []) {
+      const name = it.product?.name || `Producto #${it.productId}`;
+      plainLines.push(
+        `- ${name} x${it.quantity} -> ${Number(it.totalPrice).toLocaleString('es-CO')}`,
+      );
+    }
+    if (domicilioCosto > 0) plainLines.push(`Envío: ${domicilioCosto.toLocaleString('es-CO')}`);
+    plainLines.push(`Total general: ${totalGeneral.toLocaleString('es-CO')}`);
+    const text = plainLines.filter(Boolean).join('\n');
+
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: Number(process.env.SMTP_PORT || 587),
@@ -221,15 +260,18 @@ export class ConfirmPaymentUseCase {
     const from = `"MR SmartService" <${process.env.SMTP_USER}>`;
     const subject = `Nueva venta aprobada #${orderId} - MR SmartService`;
     const replyTo = order.buyerEmail || order.payerEmail || undefined;
-    for (const to of toEmails) {
-      await transporter.sendMail({
-        from,
-        to,
-        replyTo,
-        subject,
-        html,
-      });
-    }
+    await transporter.sendMail({
+      from,
+      to: toEmails.join(','),
+      replyTo,
+      subject,
+      text,
+      html,
+      headers: {
+        'X-Priority': '3',
+        'X-Mailer': 'MR SmartService',
+      },
+    });
   }
 }
 

@@ -1,8 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { UsersService } from './users.service.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../auth/guards/roles.guard.js';
 import { Roles } from '../auth/guards/roles.decorator.js';
+import { UpdateContadorDto } from './dto/update-contador.dto.js';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('ADMIN', 'DEV_ADMIN')
@@ -24,5 +25,15 @@ export class UsersController {
   remove(@Req() req: any, @Param('id') id: string) {
     const meId = req.user?.user_id ?? req.user?.sub ?? null;
     return this.users.deletePanelUser(Number(id), meId ? Number(meId) : null);
+  }
+
+  @Get('contador')
+  getContador() {
+    return this.users.getContadorAccount();
+  }
+
+  @Patch('contador')
+  updateContador(@Body() dto: UpdateContadorDto) {
+    return this.users.updateContadorAccount(dto);
   }
 }

@@ -25,9 +25,12 @@ export class BootstrapService implements OnApplicationBootstrap {
     const adminPass = 'Admin12345!';
     const devEmail = 'dev@tienda.com';
     const devPass = 'Dev12345!';
+    const contadorEmail = 'contador@tienda.com';
+    const contadorPass = 'Contador123!';
 
     const adminHash = bcrypt.hashSync(adminPass, 10);
     const devHash = bcrypt.hashSync(devPass, 10);
+    const contadorHash = bcrypt.hashSync(contadorPass, 10);
 
     await this.db.user.upsert({
       where: { email: adminEmail },
@@ -41,8 +44,15 @@ export class BootstrapService implements OnApplicationBootstrap {
       create: { email: devEmail, passwordHash: devHash, role: 'DEV_ADMIN' },
     });
 
+    await this.db.user.upsert({
+      where: { email: contadorEmail },
+      update: {},
+      create: { email: contadorEmail, passwordHash: contadorHash, role: 'CONTADOR' },
+    });
+
     console.log('✅ Seed usuarios listo (creados si no existían):');
     console.log('   Admin:', adminEmail);
     console.log('   Dev:  ', devEmail);
+    console.log('   Contador:', contadorEmail);
   }
 }

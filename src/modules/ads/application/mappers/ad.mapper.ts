@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 @Injectable()
 export class AdMapper {
   toLegacy(ad: any) {
+    if (!ad) return null;
     return {
       ad_id: ad.adId,
       title: ad.title,

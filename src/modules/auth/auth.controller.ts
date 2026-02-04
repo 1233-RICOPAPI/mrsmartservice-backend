@@ -45,7 +45,7 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('ADMIN', 'DEV_ADMIN', 'STAFF')
+  @Roles('ADMIN', 'DEV_ADMIN', 'STAFF', 'CONTADOR')
   @Post('api/users/change-password')
   async changePassword(@Req() req: any, @Body() dto: ChangePasswordDto) {
     const userId = Number(req.user?.user_id ?? req.user?.sub);
