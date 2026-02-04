@@ -1,5 +1,13 @@
 import 'reflect-metadata';
 import 'dotenv/config';
+
+// Cloud Run / Neon: si la URL está en la variable DB en lugar de DATABASE_URL, usarla igual
+let dbEnvSource = 'DATABASE_URL';
+if (!process.env.DATABASE_URL && process.env.DB) {
+  process.env.DATABASE_URL = process.env.DB;
+  dbEnvSource = 'DB';
+}
+
 import express from 'express';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
@@ -7,6 +15,24 @@ import { AppModule } from './app.module.js';
 
 function has(v: any) {
   return typeof v === 'string' && v.trim().length > 0;
+}
+
+/** Extrae host de DATABASE_URL para log (nunca loguear URL completa). */
+function getDbHostForLog(): { source: string; host: string; isNeon: boolean; hasSsl: boolean } {
+  const url = process.env.DATABASE_URL;
+  const source = dbEnvSource;
+  if (!url || typeof url !== 'string') {
+    return { source, host: '(no definida)', isNeon: false, hasSsl: false };
+  }
+  try {
+    const u = new URL(url);
+    const host = u.hostname || '(vacío)';
+    const isNeon = host.includes('neon.tech');
+    const hasSsl = u.searchParams.has('sslmode') || url.toLowerCase().includes('sslmode=require');
+    return { source, host, isNeon, hasSsl };
+  } catch {
+    return { source, host: '(URL inválida)', isNeon: false, hasSsl: false };
+  }
 }
 
 function toOrigin(url: string | undefined) {
@@ -77,6 +103,15 @@ async function bootstrap() {
   const port = Number(process.env.PORT || 8080);
   await app.listen(port, '0.0.0.0');
   console.log(`API (Nest) running on port ${port}`);
+
+  const dbLog = getDbHostForLog();
+  console.log(`DB: ${dbLog.source} → host=${dbLog.host} | neon.tech=${dbLog.isNeon} | ssl=${dbLog.hasSsl}`);
+  if (dbLog.host === '(no definida)' || dbLog.host === '(vacío)') {
+    console.warn('DB: Ninguna URL de BD definida; en Cloud Run definir DATABASE_URL o DB con la URL de Neon (neon.tech).');
+  }
+  if (dbLog.host.includes('localhost') || dbLog.host === '127.0.0.1') {
+    console.warn('DB: Se está usando localhost; en Cloud Run debe usarse DATABASE_URL de Neon (neon.tech).');
+  }
 }
 
 bootstrap().catch((e) => {
