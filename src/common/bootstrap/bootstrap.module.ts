@@ -6,5 +6,6 @@ import { PrismaModule } from '../prisma/prisma.module.js';
 @Module({
   imports: [PrismaModule],
   providers: [BootstrapService],
+  exports: [BootstrapService],
 })
 export class BootstrapModule {}

@@ -14,6 +14,27 @@ export class BootstrapService implements OnApplicationBootstrap {
     );
   }
 
+  /** Crea o actualiza solo el usuario contador. Útil si el seed al arranque falló. */
+  async seedContadorOnce(): Promise<{ ok: boolean; email: string; userId?: number; error?: string }> {
+    const anyDb: any = this.db as any;
+    if (!anyDb.user?.upsert) {
+      return { ok: false, email: 'contador@tienda.com', error: 'prisma_user_not_available' };
+    }
+    const contadorEmail = 'contador@tienda.com';
+    const contadorPass = 'Contador123!';
+    const contadorHash = bcrypt.hashSync(contadorPass, 10);
+    await this.db.user.upsert({
+      where: { email: contadorEmail },
+      update: { passwordHash: contadorHash },
+      create: { email: contadorEmail, passwordHash: contadorHash, role: 'CONTADOR' },
+    });
+    const contador = await this.db.user.findFirst({
+      where: { role: 'CONTADOR' },
+      select: { userId: true, email: true },
+    });
+    return { ok: true, email: contadorEmail, userId: contador?.userId };
+  }
+
   private async seedAdminOnce() {
     const anyDb: any = this.db as any;
     if (!anyDb.user?.upsert) {

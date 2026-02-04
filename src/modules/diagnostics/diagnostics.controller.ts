@@ -1,5 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
 import { MercadoPagoConfig, Preference } from 'mercadopago';
+import { BootstrapService } from '../../common/bootstrap/bootstrap.service.js';
 
 function has(v: any) {
   return typeof v === 'string' && v.trim().length > 0;
@@ -21,9 +22,17 @@ function resolveFrontBase() {
 
 @Controller()
 export class DiagnosticsController {
+  constructor(private readonly bootstrap: BootstrapService) {}
+
   @Get('/')
   root() {
     return 'mrsmartservice API OK';
+  }
+
+  /** Fuerza la creación/actualización del usuario contador (contador@tienda.com / Contador123!) */
+  @Get('api/diagnostics/seed-contador')
+  async seedContador() {
+    return this.bootstrap.seedContadorOnce();
   }
 
   @Get('api/health')
