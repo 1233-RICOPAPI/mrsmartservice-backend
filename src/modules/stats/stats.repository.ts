@@ -21,4 +21,21 @@ export class StatsRepository {
       select: { status: true },
     });
   }
+
+  /** Suma de domicilio_costo de órdenes aprobadas en rango (egresos). */
+  async sumEgresosDomicilio(from?: string, to?: string) {
+    const start = from ? new Date(`${from}T00:00:00-05:00`) : null;
+    const end = to ? new Date(`${to}T23:59:59-05:00`) : null;
+    const where: any = { status: 'APPROVED' };
+    if (start || end) {
+      where.createdAt = {};
+      if (start) where.createdAt.gte = start;
+      if (end) where.createdAt.lte = end;
+    }
+    const rows = await this.prisma.order.findMany({
+      where,
+      select: { domicilioCosto: true },
+    });
+    return rows.reduce((s, o) => s + Number(o.domicilioCosto || 0), 0);
+  }
 }
