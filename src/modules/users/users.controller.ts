@@ -16,6 +16,16 @@ export class UsersController {
     return this.users.listPanelUsers();
   }
 
+  @Get('contador')
+  getContador() {
+    return this.users.getContadorAccount();
+  }
+
+  @Patch('contador')
+  updateContador(@Body() dto: UpdateContadorDto) {
+    return this.users.updateContadorAccount(dto);
+  }
+
   @Post()
   create(@Body() body: any) {
     return this.users.createPanelUser(body);
@@ -25,15 +35,5 @@ export class UsersController {
   remove(@Req() req: any, @Param('id') id: string) {
     const meId = req.user?.user_id ?? req.user?.sub ?? null;
     return this.users.deletePanelUser(Number(id), meId ? Number(meId) : null);
-  }
-
-  @Get('contador')
-  getContador() {
-    return this.users.getContadorAccount();
-  }
-
-  @Patch('contador')
-  updateContador(@Body() dto: UpdateContadorDto) {
-    return this.users.updateContadorAccount(dto);
   }
 }

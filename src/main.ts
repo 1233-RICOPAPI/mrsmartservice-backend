@@ -60,7 +60,7 @@ async function bootstrap() {
       if (!has(process.env.FRONT_URL)) return cb(null, true);
       return cb(null, false);
     },
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   });
 
