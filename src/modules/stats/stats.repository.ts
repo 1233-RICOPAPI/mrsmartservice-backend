@@ -5,17 +5,19 @@ import { PrismaService } from '../../common/prisma/prisma.service.js';
 export class StatsRepository {
   constructor(private readonly prisma: PrismaService) {}
 
+  /** Órdenes aprobadas (ventas completadas) en el rango. El flujo de pago guarda status 'APPROVED'. */
   findApprovedSince(start: Date) {
     return this.prisma.order.findMany({
-      where: { status: 'approved', createdAt: { gte: start } },
+      where: { status: 'APPROVED', createdAt: { gte: start } },
       select: { totalAmount: true, createdAt: true },
       orderBy: { createdAt: 'asc' },
     });
   }
 
+  /** Órdenes no iniciadas (para tasa de aprobación). */
   findNonInitiatedSince(start: Date) {
     return this.prisma.order.findMany({
-      where: { status: { not: 'initiated' }, createdAt: { gte: start } },
+      where: { status: { not: 'INITIATED' }, createdAt: { gte: start } },
       select: { status: true },
     });
   }

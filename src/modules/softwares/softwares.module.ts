@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { PrismaModule } from '../../common/prisma/prisma.module.js';
 import { SoftwaresController } from './softwares.controller.js';
 import { SoftwaresRepository } from './softwares.repository.js';
 import { ListPublicSoftwaresUseCase } from './application/usecases/list-public-softwares.usecase.js';
@@ -9,6 +10,7 @@ import { DeleteSoftwareUseCase } from './application/usecases/delete-software.us
 import { GetPublicSoftwareByIdUseCase } from './application/usecases/get-public-software-by-id.usecase.js';
 
 @Module({
+  imports: [PrismaModule],
   controllers: [SoftwaresController],
   providers: [
     SoftwaresRepository,

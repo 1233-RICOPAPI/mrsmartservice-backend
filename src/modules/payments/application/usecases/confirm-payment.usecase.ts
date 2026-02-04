@@ -133,9 +133,23 @@ export class ConfirmPaymentUseCase {
     }
   }
 
+  /** Lista de correos admin para notificación de ventas (evitar spam: From claro, asunto descriptivo, replyTo comprador). */
+  private getAdminNotificationEmails(): string[] {
+    const list: string[] = [];
+    const envList = process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || process.env.NOTIFY_EMAIL || process.env.SMTP_USER || '';
+    for (const e of envList.split(/[,;\s]+/)) {
+      const t = e.trim();
+      if (t && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)) list.push(t);
+    }
+    if (list.length === 0) {
+      list.push('yesfri@hotmail.es', 'aaronmotta5@gmail.com');
+    }
+    return [...new Set(list)];
+  }
+
   private async sendOrderNotificationToAdmin(orderId: number) {
-    const toEmail = process.env.ADMIN_EMAIL || process.env.NOTIFY_EMAIL || process.env.SMTP_USER;
-    if (!toEmail || !has(process.env.SMTP_HOST) || !has(process.env.SMTP_USER) || !has(process.env.SMTP_PASS)) {
+    const toEmails = this.getAdminNotificationEmails();
+    if (!toEmails.length || !has(process.env.SMTP_HOST) || !has(process.env.SMTP_USER) || !has(process.env.SMTP_PASS)) {
       return;
     }
 
@@ -204,13 +218,18 @@ export class ConfirmPaymentUseCase {
       auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
     });
 
-    await transporter.sendMail({
-      from: `"MR SmartService" <${process.env.SMTP_USER}>`,
-      to: toEmail,
-      replyTo: order.buyerEmail || order.payerEmail || undefined,
-      subject: `Nueva venta aprobada #${orderId} - MR SmartService`,
-      html,
-    });
+    const from = `"MR SmartService" <${process.env.SMTP_USER}>`;
+    const subject = `Nueva venta aprobada #${orderId} - MR SmartService`;
+    const replyTo = order.buyerEmail || order.payerEmail || undefined;
+    for (const to of toEmails) {
+      await transporter.sendMail({
+        from,
+        to,
+        replyTo,
+        subject,
+        html,
+      });
+    }
   }
 }
 

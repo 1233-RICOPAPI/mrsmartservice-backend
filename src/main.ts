@@ -75,7 +75,7 @@ async function bootstrap() {
 
 
   const port = Number(process.env.PORT || 8080);
-  await app.listen(port);
+  await app.listen(port, '0.0.0.0');
   console.log(`API (Nest) running on port ${port}`);
 }
 

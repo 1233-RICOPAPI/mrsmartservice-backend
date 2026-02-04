@@ -29,6 +29,8 @@ export class OrdersRepository {
       where.OR = [
         ...(Number.isFinite(maybeId) ? [{ orderId: maybeId }] : []),
         { payerEmail: { contains: qq, mode: 'insensitive' } },
+        { buyerEmail: { contains: qq, mode: 'insensitive' } },
+        { buyerName: { contains: qq, mode: 'insensitive' } },
         { domicilioNombre: { contains: qq, mode: 'insensitive' } },
       ];
     }
@@ -41,6 +43,8 @@ export class OrdersRepository {
         createdAt: true,
         totalAmount: true,
         status: true,
+        buyerName: true,
+        buyerEmail: true,
         payerEmail: true,
         domicilioModo: true,
         domicilioNombre: true,
@@ -59,8 +63,10 @@ export class OrdersRepository {
       created_at: o.createdAt?.toISOString?.() ?? String(o.createdAt),
       total_amount: Number(o.totalAmount),
       status: o.status,
-      email: o.payerEmail || '',
-      customer: 'Cliente',
+      buyer_name: o.buyerName || null,
+      buyer_email: o.buyerEmail || null,
+      email: o.payerEmail || o.buyerEmail || '',
+      customer: o.buyerName || 'Cliente',
       domicilio_modo: o.domicilioModo,
       domicilio_nombre: o.domicilioNombre,
       domicilio_direccion: o.domicilioDireccion,
@@ -117,5 +123,42 @@ export class OrdersRepository {
     }));
 
     return { order, items };
+  }
+
+  /** Órdenes aprobadas en rango [from, to] con items y productos, para export Excel/PDF. */
+  async listForExport(from: string, to: string) {
+    const start = from ? new Date(`${from}T00:00:00-05:00`) : null;
+    const end = to ? new Date(`${to}T23:59:59-05:00`) : null;
+    const where: any = { status: 'APPROVED' };
+    if (start || end) {
+      where.createdAt = {};
+      if (start) where.createdAt.gte = start;
+      if (end) where.createdAt.lte = end;
+    }
+
+    const rows = await this.prisma.order.findMany({
+      where,
+      orderBy: { createdAt: 'asc' },
+      include: {
+        items: { include: { product: true } },
+      },
+    });
+
+    return rows.map((o) => ({
+      order_id: o.orderId,
+      created_at: o.createdAt,
+      total_amount: Number(o.totalAmount),
+      status: o.status,
+      buyer_name: o.buyerName || null,
+      buyer_email: o.buyerEmail || null,
+      domicilio_nombre: o.domicilioNombre || null,
+      items: o.items.map((it) => ({
+        product_id: it.productId,
+        product_name: it.product?.name || null,
+        quantity: it.quantity,
+        unit_price: Number(it.unitPrice),
+        total_price: Number(it.totalPrice),
+      })),
+    }));
   }
 }

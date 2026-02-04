@@ -17,4 +17,9 @@ export class CreateReviewDto {
   @IsOptional()
   @IsString()
   comment?: string;
+
+  /** Identificador de dispositivo (localStorage) para una sola reseña por producto por visitante (IP+device). */
+  @IsOptional()
+  @IsString()
+  device_id?: string;
 }

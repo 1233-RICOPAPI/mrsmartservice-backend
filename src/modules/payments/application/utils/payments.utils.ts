@@ -19,12 +19,38 @@ export function baseUrlFromReq(req: Request) {
   return `${proto}://${host}`;
 }
 
+const FALLBACK_FRONT_HTTPS = 'https://mrsmartservice-front-next-1avp.vercel.app';
+
+/** Base URL del front (sin barra final). */
 export function frontBase() {
   const s = String(process.env.FRONT_URL || '').trim().replace(/\/+$/, '');
   if (s) return s;
-  // ✅ Fallback seguro (MercadoPago suele requerir URLs públicas/https)
-  // Si no defines FRONT_URL, usamos el front en Vercel.
-  return 'https://mrsmartservice-front-next-1avp.vercel.app';
+  return FALLBACK_FRONT_HTTPS;
+}
+
+/**
+ * Base URL solo para Mercado Pago. MP rechaza back_urls con HTTP cuando se usa auto_return
+ * (error "auto_return invalid. back_url.success must be defined"). En local con FRONT_URL
+ * tipo http://127.0.0.1:5500/... hay que usar una URL HTTPS; por defecto el front en Vercel.
+ * Opcional: MP_FRONT_URL=https://tu-dominio.com para producción.
+ */
+export function frontBaseForMercadoPago(): string {
+  const env = process.env.MP_FRONT_URL || process.env.FRONT_URL || '';
+  const s = String(env).trim().replace(/\/+$/, '');
+  if (s && s.startsWith('https://')) return s;
+  return FALLBACK_FRONT_HTTPS;
+}
+
+/** URLs de retorno para preferencia MP: siempre HTTPS y absolutas para que MP acepte auto_return. */
+export function buildBackUrls(path = '/postpago') {
+  const base = frontBaseForMercadoPago();
+  const p = path.startsWith('/') ? path : `/${path}`;
+  const url = `${base.replace(/\/+$/, '')}${p}`;
+  return {
+    success: url,
+    failure: url,
+    pending: url,
+  };
 }
 
 export function normalizeItem(i: any) {

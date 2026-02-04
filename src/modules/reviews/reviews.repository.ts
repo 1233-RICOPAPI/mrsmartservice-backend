@@ -13,9 +13,15 @@ export class ReviewsRepository {
     });
   }
 
-  create(productId: number, authorName: string, rating: number, comment: string) {
+  findByProductAndVisitor(productId: number, visitorKey: string) {
+    return this.prisma.productReview.findFirst({
+      where: { productId, visitorKey },
+    });
+  }
+
+  create(productId: number, authorName: string, rating: number, comment: string, visitorKey?: string | null) {
     return this.prisma.productReview.create({
-      data: { productId, authorName, rating, comment },
+      data: { productId, authorName, rating, comment, visitorKey: visitorKey ?? undefined },
       select: { reviewId: true, authorName: true, rating: true, comment: true, createdAt: true },
     });
   }

@@ -4,13 +4,35 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../auth/guards/roles.guard.js';
 import { Roles } from '../auth/guards/roles.decorator.js';
 import { FinanzasReportDto } from './dto/finanzas-report.dto.js';
+import { ExportReportDto } from './dto/export-report.dto.js';
 import { GetFinanzasReportUseCase } from './application/usecases/get-finanzas-report.usecase.js';
+import { ExportReportUseCase } from './application/usecases/export-report.usecase.js';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('ADMIN', 'DEV_ADMIN')
 @Controller('api/reports')
 export class ReportsController {
-  constructor(private readonly finanzasUC: GetFinanzasReportUseCase) {}
+  constructor(
+    private readonly finanzasUC: GetFinanzasReportUseCase,
+    private readonly exportUC: ExportReportUseCase,
+  ) {}
+
+  @Get('export')
+  async exportReport(@Query() q: ExportReportDto, @Res() res: Response) {
+    const buf = await this.exportUC.execute({
+      range: q.range,
+      month: q.month,
+      year: q.year,
+      format: q.format,
+    });
+    const ext = q.format === 'pdf' ? 'pdf' : 'xlsx';
+    const mime = q.format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    const fromTo = q.range === 'month' ? q.month : q.year;
+    const filename = `reporte-${q.range}-${fromTo || 'datos'}.${ext}`;
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buf);
+  }
 
   @Get('finanzas')
   async finanzas(@Query() q: FinanzasReportDto, @Res() res: Response) {

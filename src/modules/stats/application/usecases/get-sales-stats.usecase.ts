@@ -74,7 +74,7 @@ export class GetSalesStatsUseCase {
 
     const global = await this.repo.findNonInitiatedSince(start);
     const total_orders = global.length;
-    const approved_orders = global.filter((o) => o.status === 'approved').length;
+    const approved_orders = global.filter((o) => String(o.status).toUpperCase() === 'APPROVED').length;
     const rate = total_orders > 0 ? Math.round((approved_orders / total_orders) * 100) : 0;
 
     const bucketMap = new Map<string, number>();
@@ -99,6 +99,7 @@ export class GetSalesStatsUseCase {
       rate,
       total_orders,
       approved_orders,
+      ordenes: approved_orders,
       series: {
         labels,
         values: series,

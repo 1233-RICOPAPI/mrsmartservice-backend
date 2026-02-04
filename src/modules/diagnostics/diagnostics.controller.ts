@@ -35,7 +35,7 @@ export class DiagnosticsController {
   debugEnv() {
     return {
       has_access_token: has(process.env.MP_ACCESS_TOKEN),
-      token_prefix: (process.env.MP_ACCESS_TOKEN || '').slice(0, 6),
+      // ⚠️ No exponemos token_prefix en prod (info disclosure)
       front_url: process.env.FRONT_URL || null,
     };
   }

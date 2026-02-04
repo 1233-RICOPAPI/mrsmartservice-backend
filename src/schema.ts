@@ -292,6 +292,7 @@ ALTER TABLE order_items ADD COLUMN IF NOT EXISTS unit_price NUMERIC(12,2) NOT NU
 ALTER TABLE order_items ADD COLUMN IF NOT EXISTS total_price NUMERIC(12,2) NOT NULL DEFAULT 0;
 
 ALTER TABLE product_reviews ADD COLUMN IF NOT EXISTS user_id INTEGER NULL REFERENCES users(user_id) ON DELETE SET NULL;
+ALTER TABLE product_reviews ADD COLUMN IF NOT EXISTS visitor_key TEXT;
 
 -- Compatibilidad con versiones antiguas de password_resets
 ALTER TABLE password_resets ADD COLUMN IF NOT EXISTS id SERIAL;

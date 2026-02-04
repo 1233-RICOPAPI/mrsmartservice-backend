@@ -3,7 +3,7 @@ import type { Request } from 'express';
 import { PrismaService } from '../../../../common/prisma/prisma.service.js';
 import { MpClientService } from '../../infrastructure/mp-client.service.js';
 import { CreatePaymentDto } from '../../dto/create-payment.dto.js';
-import { envBool, frontBase, MP_CURRENCY, normalizeItem } from '../utils/payments.utils.js';
+import { buildBackUrls, envBool, MP_CURRENCY, normalizeItem } from '../utils/payments.utils.js';
 
 @Injectable()
 export class CreatePreferenceUseCase {
@@ -99,18 +99,17 @@ export class CreatePreferenceUseCase {
       });
     }
 
-    const back_urls = {
-      success: `${frontBase()}/postpago`,
-      failure: `${frontBase()}/postpago`,
-      pending: `${frontBase()}/postpago`,
-    };
-
+    const back_urls = buildBackUrls('/postpago');
+    // MercadoPago exige back_urls.success definida cuando se usa auto_return (error "back_url.success must be defined")
     const pref = this.mp.preference();
     const body: any = {
       items: normalized,
-      back_urls,
+      back_urls: {
+        success: back_urls.success,
+        failure: back_urls.failure,
+        pending: back_urls.pending,
+      },
       binary_mode: envBool(process.env.MP_BINARY_MODE, true),
-      // ✅ Solo retornar automáticamente al éxito
       auto_return: 'approved',
     };
 
