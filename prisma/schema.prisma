@@ -20,6 +20,7 @@ model User {
 
   productReviews ProductReview[]
   passwordResets PasswordReset[]
+  orders         Order[]
 
   @@map("users")
 }
@@ -158,6 +159,7 @@ model LicenseActivation {
 
 model Order {
   orderId      Int     @id @default(autoincrement()) @map("order_id")
+  userId       Int?    @map("user_id")
   buyerName    String? @map("buyer_name")
   buyerEmail   String? @map("buyer_email")
   buyerPhone   String? @map("buyer_phone")
@@ -190,6 +192,7 @@ model Order {
   fechaDomicilio     DateTime? @map("fecha_domicilio")
   estadoDomicilio    String?   @map("estado_domicilio")
 
+  user                User?                 @relation(fields: [userId], references: [userId], onDelete: SetNull)
   items               OrderItem[]
   softwareCredentials SoftwareCredential[]
 
