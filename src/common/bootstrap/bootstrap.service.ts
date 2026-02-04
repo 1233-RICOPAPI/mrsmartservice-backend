@@ -50,9 +50,10 @@ export class BootstrapService implements OnApplicationBootstrap {
       create: { email: contadorEmail, passwordHash: contadorHash, role: 'CONTADOR' },
     });
 
-    console.log('✅ Seed usuarios listo (creados si no existían):');
+    const contador = await this.db.user.findFirst({ where: { role: 'CONTADOR' }, select: { userId: true, email: true } });
+    console.log('✅ Seed usuarios listo (creados/actualizados):');
     console.log('   Admin:', adminEmail);
     console.log('   Dev:  ', devEmail);
-    console.log('   Contador:', contadorEmail);
+    console.log('   Contador:', contadorEmail, contador ? `(userId=${contador.userId})` : '(no encontrado)');
   }
 }

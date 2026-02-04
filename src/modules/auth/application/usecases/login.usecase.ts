@@ -10,7 +10,8 @@ export class LoginUseCase {
   async execute(email: string, password: string) {
     if (!email || !password) return { error: 'missing_credentials' };
 
-    const user = await this.repo.findByEmail(email);
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await this.repo.findByEmail(normalizedEmail);
     if (!user) return { error: 'invalid_credentials' };
 
     const ok = await bcrypt.compare(password, user.passwordHash);
