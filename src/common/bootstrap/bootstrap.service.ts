@@ -46,7 +46,7 @@ export class BootstrapService implements OnApplicationBootstrap {
 
     await this.db.user.upsert({
       where: { email: contadorEmail },
-      update: {},
+      update: { passwordHash: contadorHash },
       create: { email: contadorEmail, passwordHash: contadorHash, role: 'CONTADOR' },
     });
 
