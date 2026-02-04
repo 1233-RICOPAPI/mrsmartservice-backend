@@ -11,11 +11,7 @@ import { UpdateContadorDto } from './dto/update-contador.dto.js';
 export class UsersController {
   constructor(private readonly users: UsersService) {}
 
-  @Get()
-  list() {
-    return this.users.listPanelUsers();
-  }
-
+  // Rutas estáticas ANTES de cualquier ruta con :id para que Nest no capture 'contador' como id
   @Get('contador')
   getContador() {
     return this.users.getContadorAccount();
@@ -24,6 +20,11 @@ export class UsersController {
   @Patch('contador')
   updateContador(@Body() dto: UpdateContadorDto) {
     return this.users.updateContadorAccount(dto);
+  }
+
+  @Get()
+  list() {
+    return this.users.listPanelUsers();
   }
 
   @Post()
